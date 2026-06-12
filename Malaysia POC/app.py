@@ -6,9 +6,6 @@ from datetime import datetime
 import plotly.express as px
 from typing import List, Dict, Any
 
-# ==========================================
-# 1. CONFIGURATION & CSS INJECTION
-# ==========================================
 st.set_page_config(
     page_title="Marvel.AI | Travel PA Claims", 
     layout="wide", 
@@ -25,9 +22,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. STATE INITIALIZATION (DATA LAYER)
-# ==========================================
 def initialize_state() -> None:
     """Initializes the database/state if it doesn't exist."""
     if 'claims' not in st.session_state:
@@ -45,9 +39,6 @@ def initialize_state() -> None:
             {"Policy": "POL-8803", "Name": "Mateo Rossi", "Nominee": "Isabella Rossi", "Valid": "2026-05-10 to 2026-05-25", "Coverages": "Medical, Death"},
         ])
 
-# ==========================================
-# 3. UI MODULES (VIEW LAYER)
-# ==========================================
 def render_analytics() -> None:
     """Renders the executive analytics dashboard."""
     st.title("📊 Outcome Analytics")
@@ -140,8 +131,6 @@ def render_ingestion() -> None:
                 progress_bar.progress(progress)
             
             st.toast("Batch Processing Complete!", icon="✅")
-            
-            # Display Consolidated Results
             st.divider()
             st.subheader("Marvel.AI Processing Report")
             
@@ -175,7 +164,6 @@ def render_registrar() -> None:
     st.title("🗄️ Master Registrar")
     st.caption("Immutable ledger of all ingested and processed claims.")
     
-    # Professional Addition: Search and Filter capabilities
     search = st.text_input("🔍 Search Registry", placeholder="Enter Claim ID, Name, or Policy Number...")
     df = st.session_state.claims
     
@@ -204,10 +192,6 @@ def render_policy_rules() -> None:
         {"Rule": "Duplicate Detection", "Description": "Hashes document attachments to prevent double submissions.", "Status": "Active"},
     ]
     st.table(pd.DataFrame(rules))
-
-# ==========================================
-# 4. MAIN APPLICATION ROUTER
-# ==========================================
 def main() -> None:
     initialize_state()
     
