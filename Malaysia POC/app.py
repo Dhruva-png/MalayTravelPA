@@ -11,19 +11,8 @@ requests>=2.31.0
 Pillow>=10.2.0
 PyMuPDF>=1.23.0
 ollama>=0.1.8
-
-Usage:
-------
-1. Install dependencies:  pip install -r requirements.txt
-2. Ensure Ollama is running locally with llama3.2 pulled:
-       ollama pull llama3.2
-       ollama serve
-3. Run the app:  streamlit run marvelai_claims_portal.py
 """
 
-# ──────────────────────────────────────────────────────────────────────────────
-# IMPORTS
-# ──────────────────────────────────────────────────────────────────────────────
 import json
 import random
 import re
@@ -39,9 +28,6 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
-# ──────────────────────────────────────────────────────────────────────────────
-# PAGE CONFIG  (must be first Streamlit call)
-# ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="MarvelAI · Claims Portal",
     page_icon="🛡️",
@@ -49,9 +35,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ──────────────────────────────────────────────────────────────────────────────
-# GLOBAL CONSTANTS & CONFIG
-# ──────────────────────────────────────────────────────────────────────────────
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.2"
 OLLAMA_TIMEOUT = 120          # seconds
@@ -72,9 +55,6 @@ DOC_TYPES = [
     "Insurance Policy", "Claim Form", "Discharge Summary", "Unknown",
 ]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# CUSTOM CSS  – professional light theme
-# ──────────────────────────────────────────────────────────────────────────────
 def inject_css() -> None:
     st.markdown("""
     <style>
@@ -212,9 +192,6 @@ def inject_css() -> None:
     """, unsafe_allow_html=True)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# MOCK DATA GENERATORS
-# ──────────────────────────────────────────────────────────────────────────────
 def generate_mock_claims(n: int = 120) -> pd.DataFrame:
     """Generate synthetic claims data for dashboard analytics."""
     random.seed(42)
@@ -258,7 +235,7 @@ def mock_ocr_text(doc_type_hint: str = "hospital_bill") -> str:
     samples = {
         "hospital_bill": """
 CITY GENERAL HOSPITAL — PATIENT BILL
-Patient: Rajesh Kumar Sharma
+Patient: Dhruva Sandeep
 Policy No: TRV-2024-INS-88742
 Date of Admission: 14 March 2024    Date of Discharge: 19 March 2024
 Accident Date: 13 March 2024        Location: Bangkok, Thailand
@@ -267,7 +244,7 @@ Treatment: Surgical fixation, physiotherapy sessions
 Room Charges: ₹42,000   Surgical Charges: ₹1,18,500
 Medicines: ₹12,340      Consultation: ₹8,500
 TOTAL DUE: ₹1,81,340
-Nominee: Priya Sharma (Spouse)
+Nominee: Rani Ramnani (Spouse)
 Bank Account: HDFC Bank, A/C 50200012345678, IFSC HDFC0001234
 """,
         "death_certificate": """
@@ -283,7 +260,7 @@ Bank Account: SBI, A/C 31209876543, IFSC SBIN0007654
 """,
         "disability_report": """
 DISABILITY ASSESSMENT REPORT
-Patient: Santhosh Pillai     Policy No: TRV-2024-SEA-30019
+Patient: Sandeep Pillai     Policy No: TRV-2024-SEA-30019
 Date of Accident: 22 January 2024    Location: Kuala Lumpur, Malaysia
 Nature of Injury: Traumatic amputation of left index finger (M00.87)
 Disability %: 15% Permanent Partial Disability
@@ -297,10 +274,6 @@ Bank Account: Axis Bank, A/C 9170200012345678, IFSC UTIB0001234
     }
     return samples.get(doc_type_hint, samples["hospital_bill"])
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# OLLAMA LLM INTEGRATION
-# ──────────────────────────────────────────────────────────────────────────────
 def ollama_generate(prompt: str, stream: bool = False) -> Optional[str]:
     """
     Call the local Ollama /api/generate endpoint.
@@ -330,8 +303,6 @@ def ollama_generate(prompt: str, stream: bool = False) -> Optional[str]:
         st.error(f"🔴 **Unexpected error calling LLM:** {e}")
     return None
 
-
-# ── Prompt Template 1: Document Classification ────────────────────────────────
 CLASSIFY_PROMPT = """You are an expert insurance document classifier.
 Given the OCR text of an insurance-related document, classify it into exactly one
 of these categories:
@@ -347,8 +318,6 @@ DOCUMENT TEXT:
 
 Category:"""
 
-
-# ── Prompt Template 2: Structured Data Extraction ─────────────────────────────
 EXTRACT_PROMPT = """You are a precise insurance data extraction engine.
 Extract the following fields from the document text and return a valid JSON object.
 If a field is not found, use null. Dates must be in ISO 8601 format (YYYY-MM-DD).
@@ -380,8 +349,6 @@ DOCUMENT TEXT:
 
 JSON:"""
 
-
-# ── Prompt Template 3: Fraud Detection Scoring ───────────────────────────────
 FRAUD_PROMPT = """You are a senior insurance fraud analyst specialising in Travel PA claims.
 Analyse the document text for anomalies and fraud indicators.
 
@@ -452,11 +419,6 @@ def score_fraud(text: str) -> Dict[str, Any]:
         st.warning("⚠️ LLM returned non-JSON output for fraud scoring; showing raw.")
         return {"raw_response": response}
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# RULE-BASED VALIDATION ENGINE
-# ──────────────────────────────────────────────────────────────────────────────
-
 # Simulated policy database
 MOCK_POLICIES: Dict[str, Dict] = {
     "TRV-2024-INS-88742": {
@@ -482,7 +444,6 @@ MOCK_POLICIES: Dict[str, Dict] = {
     },
 }
 
-# Simulated duplicate detection store (would be a DB in production)
 SUBMITTED_CLAIMS: List[str] = ["TRV-2024-INS-77001", "TRV-2024-GBL-11980"]
 
 
@@ -501,7 +462,6 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
     cost       = extracted.get("treatment_costs_inr")
     disability = extracted.get("disability_percent")
 
-    # ── Rule 1: Policy exists ─────────────────────────────────────────────────
     policy = MOCK_POLICIES.get(policy_no) if policy_no else None
     if not policy_no:
         results.append({"rule": "Policy Number Present", "status": "Fail",
@@ -513,7 +473,6 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
         results.append({"rule": "Policy Exists", "status": "Pass",
                          "message": f"Policy {policy_no} verified."})
 
-    # ── Rule 2: Insured name matches ──────────────────────────────────────────
     if policy and extracted.get("insured_name"):
         name_match = (
             extracted["insured_name"].strip().lower()
@@ -614,10 +573,6 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
 
     return results
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# HELPER UI COMPONENTS
-# ──────────────────────────────────────────────────────────────────────────────
 def badge_html(status: str) -> str:
     mapping = {
         "Pass"    : "badge-success",
@@ -661,10 +616,6 @@ def fraud_bar_html(score: float) -> str:
 def section_header(title: str) -> None:
     st.markdown(f'<div class="section-header">{title}</div>', unsafe_allow_html=True)
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PAGE: DASHBOARD (ANALYTICS)
-# ──────────────────────────────────────────────────────────────────────────────
 def page_dashboard(df: pd.DataFrame) -> None:
     st.markdown("## 📊 Claims Analytics Dashboard")
     st.markdown("Real-time overview of submitted travel PA insurance claims.")
@@ -846,10 +797,6 @@ def page_dashboard(df: pd.DataFrame) -> None:
         hide_index=True,
     )
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PAGE: CLAIM INGESTION
-# ──────────────────────────────────────────────────────────────────────────────
 def page_ingestion() -> None:
     st.markdown("## 📥 Claim Document Ingestion")
     st.markdown(
@@ -928,10 +875,6 @@ def page_ingestion() -> None:
             "Proceed to **Processing & Extraction** in the sidebar."
         )
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PAGE: PROCESSING & EXTRACTION
-# ──────────────────────────────────────────────────────────────────────────────
 def page_processing() -> None:
     st.markdown("## ⚙️ Processing & Data Extraction")
     st.markdown(
@@ -993,10 +936,6 @@ def page_processing() -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PAGE: VALIDATION
-# ──────────────────────────────────────────────────────────────────────────────
 def page_validation() -> None:
     st.markdown("## ✅ Claim Validation")
     st.markdown("Run policy rule checks against extracted claim data.")
@@ -1071,10 +1010,6 @@ def page_validation() -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PAGE: AI FRAUD SCORING
-# ──────────────────────────────────────────────────────────────────────────────
 def page_fraud_scoring() -> None:
     st.markdown("## 🕵️ AI Fraud Detection & Scoring")
     st.markdown(
@@ -1155,10 +1090,6 @@ def page_fraud_scoring() -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# SIDEBAR NAVIGATION
-# ──────────────────────────────────────────────────────────────────────────────
 def render_sidebar() -> str:
     with st.sidebar:
         # Logo / Brand
@@ -1234,10 +1165,6 @@ def render_sidebar() -> str:
 
         return pages[selected_label]
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# MAIN ENTRYPOINT
-# ──────────────────────────────────────────────────────────────────────────────
 def main() -> None:
     inject_css()
 

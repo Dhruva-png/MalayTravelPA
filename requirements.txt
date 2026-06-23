@@ -1,6 +1,7 @@
-streamlit
-pandas
-plotly
-datetime
-typing
-requests
+streamlit>=1.32.0
+plotly>=5.20.0
+pandas>=2.2.0
+requests>=2.31.0
+Pillow>=10.2.0
+PyMuPDF>=1.23.0
+ollama>=0.1.8
