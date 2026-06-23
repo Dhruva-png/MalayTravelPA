@@ -522,6 +522,238 @@ def inject_css() -> None:
         border-radius: 8px !important;
         background: #FFFFFF !important;
     }
+    /* Final art direction: executive claims console */
+    :root {
+        --ink: #172033;
+        --ink-soft: #344054;
+        --canvas: #F7F5F0;
+        --panel: #FFFFFF;
+        --panel-soft: #FBFAF7;
+        --line: #E4DFD6;
+        --line-strong: #D6CEC0;
+        --brand: #1F6F68;
+        --brand-deep: #174E4A;
+        --brand-soft: #E8F3F1;
+        --accent: #C98A2E;
+        --accent-soft: #FFF4E4;
+        --blue: #2E5EAA;
+        --blue-light: #E9F0FA;
+        --success: #1F7A4D;
+        --success-bg: #EAF6EF;
+        --warning: #A86512;
+        --warning-bg: #FFF4E4;
+        --danger: #B2382F;
+        --danger-bg: #FCEDEA;
+        --text-heading: var(--ink);
+        --text-body: var(--ink-soft);
+        --text-muted: #716B62;
+        --surface-page: var(--canvas);
+        --surface: var(--panel);
+        --border: var(--line);
+        --border-light: #EEE9E0;
+    }
+    html, body,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    .main .block-container {
+        background:
+            radial-gradient(circle at top left, rgba(31,111,104,0.08), transparent 32rem),
+            linear-gradient(180deg, #FBFAF7 0%, var(--canvas) 52%, #F1EEE7 100%) !important;
+    }
+    .main .block-container {
+        max-width: 1320px;
+        padding: 1.65rem 2.1rem 3.25rem !important;
+    }
+    [data-testid="stSidebar"] {
+        background:
+            linear-gradient(180deg, #172033 0%, #142A2E 58%, #102020 100%) !important;
+        border-right: 1px solid rgba(255,255,255,0.10) !important;
+        box-shadow: 16px 0 38px rgba(23,32,51,0.14);
+    }
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.35rem;
+    }
+    [data-testid="stSidebar"] .stRadio > div {
+        gap: 0.35rem;
+    }
+    [data-testid="stSidebar"] .stRadio > div > label {
+        background: transparent !important;
+        border: 1px solid transparent;
+        border-radius: 8px !important;
+        color: rgba(255,255,255,0.78) !important;
+        padding: 0.72rem 0.78rem !important;
+        font-weight: 600;
+    }
+    [data-testid="stSidebar"] .stRadio > div > label:hover {
+        background: rgba(255,255,255,0.08) !important;
+        border-color: rgba(255,255,255,0.08);
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] .stRadio > div > label:has(input:checked) {
+        background: rgba(255,255,255,0.13) !important;
+        border-color: rgba(255,255,255,0.18);
+        box-shadow: inset 3px 0 0 var(--accent);
+    }
+    .page-hero {
+        position: relative;
+        overflow: hidden;
+        background:
+            linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(251,250,247,0.98) 56%, rgba(232,243,241,0.98) 100%);
+        border: 1px solid rgba(214,206,192,0.95);
+        border-radius: 8px;
+        padding: 1.55rem 1.75rem;
+        margin: 0 0 1.35rem;
+        box-shadow: 0 18px 45px rgba(23,32,51,0.08);
+    }
+    .page-hero::after {
+        content: "";
+        position: absolute;
+        inset: auto 1.4rem 0 1.4rem;
+        height: 3px;
+        background: linear-gradient(90deg, var(--brand), var(--accent), transparent);
+        opacity: 0.9;
+    }
+    .page-kicker {
+        color: var(--brand-deep);
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 0.5rem;
+    }
+    .page-hero h1 {
+        color: var(--ink) !important;
+        font-size: 2rem;
+        font-weight: 750;
+        line-height: 1.12;
+        margin: 0 0 0.4rem;
+        letter-spacing: 0;
+    }
+    .page-hero p {
+        color: #5F6673 !important;
+        font-size: 0.98rem;
+        line-height: 1.55;
+        max-width: 820px;
+    }
+    .card,
+    .card-metric,
+    [data-testid="stExpander"],
+    [data-testid="stPlotlyChart"],
+    [data-testid="stDataFrame"] {
+        background: rgba(255,255,255,0.94) !important;
+        border: 1px solid rgba(214,206,192,0.88) !important;
+        border-radius: 8px !important;
+        box-shadow: 0 12px 30px rgba(23,32,51,0.055);
+    }
+    .card {
+        padding: 1.25rem 1.35rem;
+    }
+    .card-metric {
+        min-height: 118px;
+        align-items: flex-start;
+        text-align: left;
+        padding: 1.15rem 1.2rem;
+        background:
+            linear-gradient(180deg, #FFFFFF 0%, #FBFAF7 100%) !important;
+    }
+    .metric-value {
+        color: var(--ink);
+        font-size: 2.05rem;
+        font-weight: 760;
+    }
+    .metric-label {
+        color: #7A746B;
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.09em;
+    }
+    .metric-delta-up,
+    .metric-delta-down {
+        border-radius: 999px;
+        padding: 0.12rem 0.5rem;
+        font-weight: 700;
+    }
+    .metric-delta-up {
+        background: var(--success-bg);
+        color: var(--success);
+    }
+    .metric-delta-down {
+        background: var(--danger-bg);
+        color: var(--danger);
+    }
+    .section-header {
+        border-bottom: 1px solid var(--line);
+        color: var(--ink);
+        font-size: 0.72rem;
+        font-weight: 850;
+        letter-spacing: 0.11em;
+        margin: 1.45rem 0 0.95rem;
+        padding-bottom: 0.55rem;
+    }
+    .section-header::before {
+        content: "";
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        margin-right: 0.45rem;
+        border-radius: 50%;
+        background: var(--accent);
+    }
+    .badge {
+        border-radius: 999px;
+        padding: 0.22rem 0.62rem;
+        font-size: 0.68rem;
+        font-weight: 800;
+    }
+    .badge-info,
+    .badge-neutral {
+        background: var(--brand-soft);
+        color: var(--brand-deep);
+    }
+    .stButton > button {
+        background: linear-gradient(180deg, var(--brand) 0%, var(--brand-deep) 100%) !important;
+        border: 1px solid rgba(16,80,74,0.15) !important;
+        border-radius: 8px !important;
+        color: #FFFFFF !important;
+        font-weight: 750 !important;
+        min-height: 2.55rem;
+        box-shadow: 0 8px 18px rgba(31,111,104,0.18);
+    }
+    .stButton > button:hover {
+        box-shadow: 0 10px 22px rgba(31,111,104,0.24);
+        transform: translateY(-1px);
+        opacity: 1 !important;
+    }
+    [data-testid="stFileUploader"] section,
+    [data-baseweb="select"] > div,
+    [data-baseweb="input"] {
+        background: #FFFFFF !important;
+        border-color: var(--line-strong) !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stExpander"] summary {
+        color: var(--ink) !important;
+        font-weight: 750;
+    }
+    [data-testid="stPlotlyChart"] {
+        padding: 0.75rem;
+    }
+    [data-testid="stDataFrame"] thead th,
+    .dataframe thead th {
+        background: #F0EAE0 !important;
+        color: var(--ink) !important;
+    }
+    [data-testid="stAlert"] {
+        border-radius: 8px !important;
+        border: 1px solid var(--line) !important;
+        box-shadow: 0 8px 22px rgba(23,32,51,0.04);
+    }
+    .json-box,
+    code,
+    pre {
+        background: #F4F0E8 !important;
+        border-color: var(--line) !important;
+    }
     @media (max-width: 900px) {
         .main .block-container { padding: 1rem 1rem 2rem !important; }
         .page-hero h1 { font-size: 1.45rem; }
@@ -1113,18 +1345,18 @@ def page_dashboard(df: pd.DataFrame) -> None:
         status_counts.columns = ["Status", "Count"]
         # Consistent status colour palette — readable on white
         color_map = {
-            "Approved"     : "#0A7C5C",
-            "Pending"      : "#B07000",
-            "Rejected"     : "#B91C1C",
-            "Under Review" : "#1A6FE0",
-            "Fraud Flagged": "#7C3AED",
+            "Approved"     : "#1F7A4D",
+            "Pending"      : "#C98A2E",
+            "Rejected"     : "#B2382F",
+            "Under Review" : "#2E5EAA",
+            "Fraud Flagged": "#7A4F8F",
         }
         # Shared layout defaults for all charts
         chart_layout = dict(
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor ="rgba(0,0,0,0)",
-            font=dict(family="Inter, Segoe UI, sans-serif", color="#243550", size=12),
-            title_font=dict(size=13, color="#0D1F3C", family="Inter, Segoe UI, sans-serif"),
+            font=dict(family="Inter, Segoe UI, sans-serif", color="#344054", size=12),
+            title_font=dict(size=14, color="#172033", family="Inter, Segoe UI, sans-serif"),
             margin=dict(t=44, b=16, l=16, r=16),
         )
 
@@ -1137,8 +1369,8 @@ def page_dashboard(df: pd.DataFrame) -> None:
         fig.update_traces(
             textposition="outside",
             textinfo="label+percent",
-            textfont=dict(size=11, color="#243550"),
-            outsidetextfont=dict(size=11, color="#243550"),
+            textfont=dict(size=11, color="#344054"),
+            outsidetextfont=dict(size=11, color="#344054"),
         )
         fig.update_layout(showlegend=False, **chart_layout)
         st.plotly_chart(fig, use_container_width=True)
@@ -1157,12 +1389,12 @@ def page_dashboard(df: pd.DataFrame) -> None:
             title="Total Claim Value by Coverage Type",
             labels={"claim_amount": "Amount (₹)", "coverage_type": ""},
             color="claim_amount",
-            color_continuous_scale=["#B8D0F0", "#0D1F3C"],
+            color_continuous_scale=["#E8F3F1", "#1F6F68"],
         )
         fig2.update_layout(
             coloraxis_showscale=False,
-            xaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
-            yaxis=dict(tickfont=dict(color="#243550")),
+            xaxis=dict(gridcolor="#EEE9E0", tickfont=dict(color="#716B62")),
+            yaxis=dict(tickfont=dict(color="#344054")),
             **chart_layout,
         )
         st.plotly_chart(fig2, use_container_width=True)
@@ -1187,11 +1419,11 @@ def page_dashboard(df: pd.DataFrame) -> None:
             labels={"month": "Month", "count": "Claims"},
         )
         fig3.update_layout(
-            xaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
-            yaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
+            xaxis=dict(gridcolor="#EEE9E0", tickfont=dict(color="#716B62")),
+            yaxis=dict(gridcolor="#EEE9E0", tickfont=dict(color="#716B62")),
             legend=dict(
                 title_text="",
-                font=dict(color="#243550", size=11),
+                font=dict(color="#344054", size=11),
                 bgcolor="rgba(0,0,0,0)",
             ),
             **chart_layout,
@@ -1213,12 +1445,13 @@ def page_dashboard(df: pd.DataFrame) -> None:
         )
         fig4.update_traces(
             textposition="top center",
-            textfont=dict(size=10, color="#243550"),
+            marker=dict(line=dict(width=1, color="#FFFFFF"), opacity=0.82),
+            textfont=dict(size=10, color="#344054"),
         )
         fig4.update_layout(
             showlegend=False,
-            xaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
-            yaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
+            xaxis=dict(gridcolor="#EEE9E0", tickfont=dict(color="#716B62")),
+            yaxis=dict(gridcolor="#EEE9E0", tickfont=dict(color="#716B62")),
             **chart_layout,
         )
         st.plotly_chart(fig4, use_container_width=True)
@@ -1571,12 +1804,17 @@ def render_sidebar() -> str:
     with st.sidebar:
         # Logo / Brand
         st.markdown("""
-        <div style="padding:1.4rem 1rem 1rem;">
-            <div style="font-size:1.25rem;font-weight:700;letter-spacing:-0.02em;color:#FFFFFF;">
-                🛡️ MarvelAI
+        <div style="padding:1.45rem 1rem 1.05rem;">
+            <div style="display:flex;align-items:center;gap:0.65rem;">
+                <div style="width:34px;height:34px;border-radius:8px;background:#C98A2E;
+                            color:#172033;font-weight:850;display:flex;align-items:center;
+                            justify-content:center;letter-spacing:0;">M</div>
+                <div style="font-size:1.2rem;font-weight:800;letter-spacing:0;color:#FFFFFF;">
+                    MarvelAI
+                </div>
             </div>
             <div style="font-size:0.68rem;color:rgba(255,255,255,0.5);letter-spacing:0.13em;
-                        text-transform:uppercase;margin-top:0.25rem;">
+                        text-transform:uppercase;margin-top:0.65rem;">
                 Travel PA Claims Portal
             </div>
         </div>
@@ -1606,11 +1844,11 @@ def render_sidebar() -> str:
 
         # Navigation
         pages = {
-            "📊  Dashboard (Analytics)"       : "dashboard",
-            "📥  Claim Ingestion"             : "ingestion",
-            "⚙️  Processing & Extraction"     : "processing",
-            "✅  Validation"                  : "validation",
-            "🕵️  AI Fraud Scoring"            : "fraud",
+            "Dashboard"                  : "dashboard",
+            "Claim Ingestion"            : "ingestion",
+            "Processing & Extraction"    : "processing",
+            "Validation"                 : "validation",
+            "AI Fraud Scoring"           : "fraud",
         }
 
         selected_label = st.radio(
