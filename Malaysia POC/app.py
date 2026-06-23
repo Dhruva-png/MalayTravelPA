@@ -52,8 +52,11 @@ st.set_page_config(
 # ──────────────────────────────────────────────────────────────────────────────
 # GLOBAL CONSTANTS & CONFIG
 # ──────────────────────────────────────────────────────────────────────────────
-OLLAMA_URL   = "http://localhost:11434/api/generate"
+OLLAMA_HOST  = "http://localhost:11434"
+OLLAMA_URL   = f"{OLLAMA_HOST}/api/generate"
+OLLAMA_TAGS_URL = f"{OLLAMA_HOST}/api/tags"
 OLLAMA_MODEL = "llama3.2"
+OLLAMA_FALLBACK_MODELS = ["llama3.1"]
 OLLAMA_TIMEOUT = 120          # seconds
 
 COVERAGE_TYPES = [
@@ -412,6 +415,118 @@ def inject_css() -> None:
     /* ── Hide Streamlit chrome ───────────────────────────────────────────────  */
     #MainMenu, footer, header { visibility: hidden; }
     [data-testid="stDecoration"] { display: none; }
+
+    /* Professional refresh layer */
+    :root {
+        --navy: #101828;
+        --navy-mid: #24324A;
+        --blue: #2563EB;
+        --blue-light: #EFF6FF;
+        --surface-page: #F6F8FB;
+        --surface: #FFFFFF;
+        --border: #E3E8F0;
+        --border-light: #EEF2F7;
+        --text-heading: #111827;
+        --text-body: #344054;
+        --text-muted: #667085;
+        --success: #067647;
+        --success-bg: #ECFDF3;
+        --warning: #B54708;
+        --warning-bg: #FFFAEB;
+        --danger: #B42318;
+        --danger-bg: #FEF3F2;
+    }
+    .main .block-container {
+        padding: 1.5rem 2rem 3rem !important;
+    }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #111827 0%, #172033 100%) !important;
+        border-right: 1px solid rgba(255,255,255,0.08) !important;
+    }
+    [data-testid="stSidebar"] .stRadio > div {
+        gap: 0.25rem;
+    }
+    [data-testid="stSidebar"] .stRadio > div > label {
+        border-radius: 8px !important;
+        padding: 0.62rem 0.7rem !important;
+    }
+    [data-testid="stSidebar"] .stRadio > div > label:hover {
+        background: rgba(255,255,255,0.10) !important;
+    }
+    .page-hero {
+        background: linear-gradient(135deg, #FFFFFF 0%, #F4F7FB 56%, #EAF2FF 100%);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.35rem 1.5rem;
+        margin: 0 0 1.25rem;
+        box-shadow: 0 14px 38px rgba(16, 24, 40, 0.06);
+    }
+    .page-kicker {
+        color: var(--blue);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        margin-bottom: 0.4rem;
+    }
+    .page-hero h1 {
+        color: var(--text-heading) !important;
+        font-size: 1.85rem;
+        line-height: 1.15;
+        margin: 0 0 0.35rem;
+        letter-spacing: 0;
+    }
+    .page-hero p {
+        color: var(--text-muted) !important;
+        font-size: 0.95rem;
+        margin: 0;
+        max-width: 760px;
+    }
+    .card, .card-metric, [data-testid="stExpander"] {
+        border-radius: 8px !important;
+        border: 1px solid var(--border) !important;
+        box-shadow: 0 8px 24px rgba(16, 24, 40, 0.045);
+    }
+    .card-metric {
+        min-height: 116px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    .metric-value {
+        font-size: 2rem;
+        letter-spacing: 0;
+    }
+    .metric-label, .section-header {
+        letter-spacing: 0.08em;
+    }
+    .section-header {
+        border-bottom: 1px solid var(--border);
+        color: var(--text-heading);
+        margin-top: 1.35rem;
+    }
+    [data-testid="stPlotlyChart"] {
+        background: #FFFFFF;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 0.5rem;
+        box-shadow: 0 8px 24px rgba(16, 24, 40, 0.045);
+    }
+    .stButton > button {
+        border-radius: 8px !important;
+        min-height: 2.45rem;
+        box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+    }
+    [data-testid="stFileUploader"] section {
+        border: 1px dashed #98A2B3 !important;
+        border-radius: 8px !important;
+        background: #FFFFFF !important;
+    }
+    @media (max-width: 900px) {
+        .main .block-container { padding: 1rem 1rem 2rem !important; }
+        .page-hero h1 { font-size: 1.45rem; }
+        .page-hero { padding: 1rem; }
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -505,16 +620,66 @@ Bank Account: Axis Bank, A/C 9170200012345678, IFSC UTIB0001234
 # ──────────────────────────────────────────────────────────────────────────────
 # OLLAMA LLM INTEGRATION
 # ──────────────────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=30, show_spinner=False)
+def get_ollama_status() -> Dict[str, Any]:
+    """Check local Ollama and pick the best available model."""
+    try:
+        response = requests.get(OLLAMA_TAGS_URL, timeout=3)
+        response.raise_for_status()
+        models = response.json().get("models", [])
+        names = [m.get("name", "") for m in models if m.get("name")]
+        for candidate in [OLLAMA_MODEL, *OLLAMA_FALLBACK_MODELS]:
+            if any(name == candidate or name.startswith(f"{candidate}:") for name in names):
+                return {
+                    "online": True,
+                    "model": candidate,
+                    "models": names,
+                    "using_fallback": candidate != OLLAMA_MODEL,
+                    "error": "",
+                }
+        return {
+            "online": True,
+            "model": "",
+            "models": names,
+            "using_fallback": False,
+            "error": f"Run `ollama pull {OLLAMA_MODEL}`.",
+        }
+    except Exception as exc:
+        return {
+            "online": False,
+            "model": "",
+            "models": [],
+            "using_fallback": False,
+            "error": str(exc),
+        }
+
+
+def active_model_label() -> str:
+    status = get_ollama_status()
+    return status["model"] or OLLAMA_MODEL
+
+
 def ollama_generate(prompt: str, stream: bool = False) -> Optional[str]:
     """
     Call the local Ollama /api/generate endpoint.
     Returns the model's text response or None on failure.
     """
+    status = get_ollama_status()
+    if not status["online"]:
+        st.error("Ollama is not reachable. Start it with `ollama serve`, then retry.")
+        return None
+    if not status["model"]:
+        available = ", ".join(status["models"]) or "no local models found"
+        st.error(
+            f"Ollama is running, but `{OLLAMA_MODEL}` is not available. "
+            f"Available models: {available}. Run `ollama pull {OLLAMA_MODEL}`."
+        )
+        return None
     payload = {
-        "model" : OLLAMA_MODEL,
+        "model" : status["model"],
         "prompt": prompt,
         "stream": stream,
-        "options": {"temperature": 0.1, "num_predict": 1024},
+        "options": {"temperature": 0.05, "top_p": 0.9, "num_predict": 1024},
     }
     try:
         response = requests.post(OLLAMA_URL, json=payload, timeout=OLLAMA_TIMEOUT)
@@ -866,12 +1031,28 @@ def section_header(title: str) -> None:
     st.markdown(f'<div class="section-header">{title}</div>', unsafe_allow_html=True)
 
 
+def page_hero(title: str, subtitle: str, kicker: str = "MarvelAI Travel PA") -> None:
+    st.markdown(
+        f"""
+        <div class="page-hero">
+            <div class="page-kicker">{kicker}</div>
+            <h1>{title}</h1>
+            <p>{subtitle}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # PAGE: DASHBOARD (ANALYTICS)
 # ──────────────────────────────────────────────────────────────────────────────
 def page_dashboard(df: pd.DataFrame) -> None:
-    st.markdown("## 📊 Claims Analytics Dashboard")
-    st.markdown("Real-time overview of submitted travel PA insurance claims.")
+    page_hero(
+        "Claims Analytics Dashboard",
+        "Real-time operational view of submitted travel PA claims, exposure, risk, and processing velocity.",
+        "Portfolio overview",
+    )
 
     # ── Filters ───────────────────────────────────────────────────────────────
     with st.expander("🔍 Filter Claims", expanded=False):
@@ -1068,10 +1249,10 @@ def page_dashboard(df: pd.DataFrame) -> None:
 # PAGE: CLAIM INGESTION
 # ──────────────────────────────────────────────────────────────────────────────
 def page_ingestion() -> None:
-    st.markdown("## 📥 Claim Document Ingestion")
-    st.markdown(
-        "Upload claim-related documents (scanned images or PDFs). "
-        "The system will extract and classify each file automatically."
+    page_hero(
+        "Claim Document Ingestion",
+        "Upload claim files, assign demo OCR content, and create a clean claim workspace for downstream review.",
+        "Intake desk",
     )
 
     uploaded_files = st.file_uploader(
@@ -1152,10 +1333,10 @@ def page_ingestion() -> None:
 # PAGE: PROCESSING & EXTRACTION
 # ──────────────────────────────────────────────────────────────────────────────
 def page_processing() -> None:
-    st.markdown("## ⚙️ Processing & Data Extraction")
-    st.markdown(
-        "Classify each document type and extract structured data fields "
-        "using the local LLM (`llama3.2`)."
+    page_hero(
+        "Processing & Data Extraction",
+        f"Classify each document and extract structured fields using local Ollama model `{active_model_label()}`.",
+        "AI document operations",
     )
 
     # Collect ingested documents from session state
@@ -1217,8 +1398,11 @@ def page_processing() -> None:
 # PAGE: VALIDATION
 # ──────────────────────────────────────────────────────────────────────────────
 def page_validation() -> None:
-    st.markdown("## ✅ Claim Validation")
-    st.markdown("Run policy rule checks against extracted claim data.")
+    page_hero(
+        "Claim Validation",
+        "Run policy, chronology, coverage, and payout checks against extracted claim data.",
+        "Rules engine",
+    )
 
     ext_keys = [k for k in st.session_state if k.startswith("ext_")]
     if not ext_keys:
@@ -1295,10 +1479,10 @@ def page_validation() -> None:
 # PAGE: AI FRAUD SCORING
 # ──────────────────────────────────────────────────────────────────────────────
 def page_fraud_scoring() -> None:
-    st.markdown("## 🕵️ AI Fraud Detection & Scoring")
-    st.markdown(
-        "The local LLM analyses claim text for anomalous patterns, "
-        "inconsistencies, and fraud indicators, returning a risk score and flags."
+    page_hero(
+        "AI Fraud Detection & Scoring",
+        f"Use `{active_model_label()}` through Ollama to assess anomaly signals, fraud flags, and escalation priority.",
+        "Local LLM risk review",
     )
 
     ocr_keys = [k for k in st.session_state if k.startswith("ocr_")]
@@ -1400,24 +1584,21 @@ def render_sidebar() -> str:
         """, unsafe_allow_html=True)
 
         # LLM status indicator
-        try:
-            r = requests.get("http://localhost:11434", timeout=2)
-            llm_ok = r.status_code == 200
-        except Exception:
-            llm_ok = False
+        llm_status = get_ollama_status()
+        llm_ok = bool(llm_status["online"] and llm_status["model"])
 
         if llm_ok:
             st.markdown(
                 '<div style="padding:0 1rem 0.5rem;">'
                 '<span style="font-size:0.75rem;color:rgba(255,255,255,0.55);">'
-                '● <span style="color:#4ADE9F;">Online</span> &nbsp;·&nbsp; llama3.2</span></div>',
+                f'● <span style="color:#4ADE9F;">Online</span> &nbsp;·&nbsp; {active_model_label()}</span></div>',
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
                 '<div style="padding:0 1rem 0.5rem;">'
                 '<span style="font-size:0.75rem;color:rgba(255,255,255,0.55);">'
-                '● <span style="color:#F87171;">Offline</span> &nbsp;·&nbsp; Ollama not running</span></div>',
+                '● <span style="color:#F87171;">Offline</span> &nbsp;·&nbsp; Ollama/model unavailable</span></div>',
                 unsafe_allow_html=True,
             )
 
@@ -1462,7 +1643,7 @@ def render_sidebar() -> str:
         st.markdown(
             '<div style="font-size:0.65rem;color:rgba(255,255,255,0.28);'
             'margin-top:2rem;text-align:center;padding-bottom:1rem;">'
-            'v1.0 &nbsp;·&nbsp; llama3.2 (Ollama)</div>',
+            f'v1.1 &nbsp;·&nbsp; {active_model_label()} via Ollama</div>',
             unsafe_allow_html=True,
         )
 
