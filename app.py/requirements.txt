@@ -1,8 +1,0 @@
-streamlit
-pandas
-plotly
-datetime
-numpy
-time 
-random
-typing
