@@ -684,7 +684,7 @@ def page_dashboard(df: pd.DataFrame) -> None:
             "Under Review" : "#00A3FF",
             "Fraud Flagged": "#9333EA",
         }
-        fig = px.donut(
+        fig = px.pie(
             status_counts, names="Status", values="Count",
             color="Status", color_discrete_map=color_map,
             title="Claim Status Breakdown",
