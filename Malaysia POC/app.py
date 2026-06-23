@@ -11,8 +11,19 @@ requests>=2.31.0
 Pillow>=10.2.0
 PyMuPDF>=1.23.0
 ollama>=0.1.8
+
+Usage:
+------
+1. Install dependencies:  pip install -r requirements.txt
+2. Ensure Ollama is running locally with llama3.2 pulled:
+       ollama pull llama3.2
+       ollama serve
+3. Run the app:  streamlit run marvelai_claims_portal.py
 """
 
+# ──────────────────────────────────────────────────────────────────────────────
+# IMPORTS
+# ──────────────────────────────────────────────────────────────────────────────
 import json
 import random
 import re
@@ -28,6 +39,9 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+# ──────────────────────────────────────────────────────────────────────────────
+# PAGE CONFIG  (must be first Streamlit call)
+# ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="MarvelAI · Claims Portal",
     page_icon="🛡️",
@@ -35,6 +49,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ──────────────────────────────────────────────────────────────────────────────
+# GLOBAL CONSTANTS & CONFIG
+# ──────────────────────────────────────────────────────────────────────────────
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.2"
 OLLAMA_TIMEOUT = 120          # seconds
@@ -55,143 +72,353 @@ DOC_TYPES = [
     "Insurance Policy", "Claim Form", "Discharge Summary", "Unknown",
 ]
 
+# ──────────────────────────────────────────────────────────────────────────────
+# CUSTOM CSS  – professional light theme
+# ──────────────────────────────────────────────────────────────────────────────
 def inject_css() -> None:
     st.markdown("""
     <style>
-    /* ── Root palette ─────────────────────────────── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    /* ── Design tokens ──────────────────────────────────────────────────────── */
     :root {
-        --brand-primary  : #0A2540;   /* deep navy          */
-        --brand-accent   : #00A3FF;   /* electric blue      */
-        --brand-success  : #00C9A7;   /* teal green         */
-        --brand-warning  : #FFB830;   /* amber              */
-        --brand-danger   : #FF4757;   /* crisp red          */
-        --surface        : #FFFFFF;
-        --surface-raised : #F4F7FB;
-        --border         : #E2E8F0;
-        --text-primary   : #0A2540;
-        --text-secondary : #64748B;
-        --font-sans      : "Inter", "Segoe UI", sans-serif;
-        --font-mono      : "JetBrains Mono", "Fira Code", monospace;
+        /* Brand */
+        --navy          : #0D1F3C;
+        --navy-mid      : #1A3354;
+        --blue          : #1A6FE0;
+        --blue-light    : #E8F1FC;
+
+        /* Semantic */
+        --success       : #0A7C5C;
+        --success-bg    : #E6F5F0;
+        --warning       : #7A4F00;
+        --warning-bg    : #FEF3CD;
+        --danger        : #B91C1C;
+        --danger-bg     : #FEE8E8;
+        --info          : #1753A8;
+        --info-bg       : #EBF2FD;
+
+        /* Surfaces */
+        --surface       : #FFFFFF;
+        --surface-page  : #F0F4F9;
+        --surface-raised: #FFFFFF;
+        --border        : #D8E1EE;
+        --border-light  : #EAF0F8;
+
+        /* Text — all on white or #F0F4F9 backgrounds */
+        --text-heading  : #0D1F3C;
+        --text-body     : #243550;
+        --text-muted    : #5A6E89;
+        --text-faint    : #8FA3BC;
+
+        /* Typography */
+        --font          : "Inter", "Segoe UI", system-ui, sans-serif;
+        --font-mono     : "JetBrains Mono", "Fira Code", "Consolas", monospace;
     }
 
-    /* ── Global resets ─────────────────────────────── */
-    html, body, [data-testid="stAppViewContainer"] {
-        background: var(--surface-raised) !important;
-        font-family: var(--font-sans) !important;
-        color: var(--text-primary) !important;
+    /* ── Global base ─────────────────────────────────────────────────────────  */
+    html, body,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    .main .block-container {
+        background-color: var(--surface-page) !important;
+        font-family: var(--font) !important;
+        color: var(--text-body) !important;
     }
 
-    /* ── Sidebar ───────────────────────────────────── */
+    /* Streamlit default text overrides */
+    p, li, span, label, div {
+        color: var(--text-body);
+    }
+    h1, h2, h3, h4 {
+        color: var(--text-heading) !important;
+        font-family: var(--font) !important;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────────────  */
     [data-testid="stSidebar"] {
-        background: var(--brand-primary) !important;
-        border-right: 3px solid var(--brand-accent) !important;
+        background-color: var(--navy) !important;
+        border-right: 2px solid var(--navy-mid) !important;
+        padding-top: 0 !important;
     }
-    [data-testid="stSidebar"] * {
+    /* All text inside sidebar: white */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] div,
+    [data-testid="stSidebar"] label {
         color: #FFFFFF !important;
     }
-    [data-testid="stSidebar"] .stRadio label {
-        font-size: 0.9rem;
-        padding: 0.4rem 0;
+    /* Radio option labels specifically */
+    [data-testid="stSidebar"] .stRadio > div > label {
+        color: rgba(255,255,255,0.82) !important;
+        font-size: 0.875rem;
+        padding: 0.45rem 0.6rem;
         border-radius: 6px;
-        cursor: pointer;
+        margin: 1px 0;
+        transition: background 0.15s, color 0.15s;
+        display: block;
+    }
+    [data-testid="stSidebar"] .stRadio > div > label:hover {
+        background: rgba(255,255,255,0.08) !important;
+        color: #FFFFFF !important;
+    }
+    /* Selected radio item */
+    [data-testid="stSidebar"] .stRadio > div > label[data-baseweb="radio"] > div:first-child {
+        border-color: var(--blue) !important;
+        background-color: var(--blue) !important;
+    }
+    /* Sidebar buttons */
+    [data-testid="stSidebar"] .stButton > button {
+        background: rgba(255,255,255,0.08) !important;
+        color: rgba(255,255,255,0.75) !important;
+        border: 1px solid rgba(255,255,255,0.15) !important;
+        border-radius: 6px;
+        font-size: 0.82rem;
         transition: background 0.15s;
     }
-    [data-testid="stSidebar"] .stRadio label:hover {
-        background: rgba(0,163,255,0.15) !important;
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background: rgba(255,255,255,0.14) !important;
+        color: #FFFFFF !important;
+    }
+    /* Sidebar divider */
+    [data-testid="stSidebar"] hr {
+        border-color: rgba(255,255,255,0.12) !important;
     }
 
-    /* ── Cards ─────────────────────────────────────── */
+    /* ── Main content padding ────────────────────────────────────────────────  */
+    .main .block-container {
+        padding: 2rem 2.5rem 3rem !important;
+        max-width: 1400px;
+    }
+
+    /* ── Page title & subtitle ───────────────────────────────────────────────  */
+    [data-testid="stMarkdownContainer"] h2 {
+        font-size: 1.45rem;
+        font-weight: 700;
+        color: var(--text-heading) !important;
+        margin-bottom: 0.25rem;
+        letter-spacing: -0.02em;
+    }
+    [data-testid="stMarkdownContainer"] > p:first-of-type {
+        color: var(--text-muted) !important;
+        font-size: 0.9rem;
+        margin-top: 0;
+    }
+
+    /* ── Cards ───────────────────────────────────────────────────────────────  */
     .card {
         background: var(--surface);
         border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 1.4rem 1.6rem;
+        border-radius: 10px;
+        padding: 1.35rem 1.5rem;
         margin-bottom: 1rem;
-        box-shadow: 0 1px 4px rgba(10,37,64,0.06);
     }
+    .card h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-heading);
+        margin: 0 0 0.25rem;
+    }
+
+    /* ── Metric cards ────────────────────────────────────────────────────────  */
     .card-metric {
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: 10px;
-        padding: 1.1rem 1.2rem;
+        padding: 1.1rem 1rem 1rem;
         text-align: center;
-        box-shadow: 0 1px 3px rgba(10,37,64,0.05);
     }
     .metric-value {
-        font-size: 2rem;
+        font-size: 1.9rem;
         font-weight: 700;
-        color: var(--brand-primary);
+        color: var(--text-heading);
         line-height: 1.1;
+        letter-spacing: -0.02em;
     }
     .metric-label {
-        font-size: 0.75rem;
-        color: var(--text-secondary);
+        font-size: 0.7rem;
+        color: var(--text-muted);
         text-transform: uppercase;
-        letter-spacing: 0.08em;
-        margin-top: 0.3rem;
+        letter-spacing: 0.09em;
+        margin-top: 0.35rem;
+        font-weight: 500;
     }
-    .metric-delta-up   { color: var(--brand-success); font-size: 0.8rem; }
-    .metric-delta-down { color: var(--brand-danger);  font-size: 0.8rem; }
+    .metric-delta-up   { color: var(--success); font-size: 0.78rem; margin-top: 0.2rem; }
+    .metric-delta-down { color: var(--danger);  font-size: 0.78rem; margin-top: 0.2rem; }
 
-    /* ── Status badges ─────────────────────────────── */
+    /* ── Section headers ─────────────────────────────────────────────────────  */
+    .section-header {
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        border-bottom: 2px solid var(--border-light);
+        padding-bottom: 0.45rem;
+        margin: 1.5rem 0 0.9rem;
+    }
+
+    /* ── Status badges ───────────────────────────────────────────────────────  */
     .badge {
         display: inline-block;
-        padding: 0.2rem 0.65rem;
-        border-radius: 999px;
-        font-size: 0.72rem;
+        padding: 0.18rem 0.6rem;
+        border-radius: 4px;
+        font-size: 0.7rem;
         font-weight: 600;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.04em;
         text-transform: uppercase;
+        line-height: 1.5;
     }
-    .badge-success  { background:#D1FAF4; color:#00856F; }
-    .badge-warning  { background:#FFF3CD; color:#7D5A00; }
-    .badge-danger   { background:#FFE4E6; color:#B91C1C; }
-    .badge-info     { background:#DBEAFE; color:#1D4ED8; }
-    .badge-neutral  { background:#F1F5F9; color:#475569; }
+    .badge-success { background: var(--success-bg); color: var(--success); }
+    .badge-warning { background: var(--warning-bg); color: var(--warning); }
+    .badge-danger  { background: var(--danger-bg);  color: var(--danger);  }
+    .badge-info    { background: var(--info-bg);    color: var(--info);    }
+    .badge-neutral { background: var(--border-light); color: var(--text-muted); }
 
-    /* ── Section headers ───────────────────────────── */
-    .section-header {
-        font-size: 1.05rem;
-        font-weight: 700;
-        color: var(--brand-primary);
-        border-left: 4px solid var(--brand-accent);
-        padding-left: 0.75rem;
-        margin: 1.4rem 0 0.9rem;
-        letter-spacing: -0.01em;
+    /* ── Fraud score bar ─────────────────────────────────────────────────────  */
+    .fraud-bar-wrapper {
+        width: 100%;
+        background: var(--border-light);
+        border-radius: 999px;
+        height: 8px;
+        margin: 0.5rem 0 0.25rem;
+        overflow: hidden;
+    }
+    .fraud-bar {
+        height: 8px;
+        border-radius: 999px;
+    }
+    .fraud-score-label {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-top: 0.15rem;
     }
 
-    /* ── Fraud score bar ───────────────────────────── */
-    .fraud-bar-wrapper { width: 100%; background: var(--border); border-radius: 999px; height: 10px; margin: 0.4rem 0; }
-    .fraud-bar { height: 10px; border-radius: 999px; transition: width 0.4s ease; }
-
-    /* ── JSON output ───────────────────────────────── */
+    /* ── JSON box ────────────────────────────────────────────────────────────  */
     .json-box {
-        background: #F8FAFC;
+        background: var(--surface-page);
         border: 1px solid var(--border);
         border-radius: 8px;
-        padding: 1rem;
+        padding: 0.9rem 1rem;
         font-family: var(--font-mono);
-        font-size: 0.8rem;
-        overflow-x: auto;
-        line-height: 1.7;
-    }
-
-    /* ── Tables ────────────────────────────────────── */
-    .dataframe thead th {
-        background: var(--brand-primary) !important;
-        color: #fff !important;
         font-size: 0.78rem;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
+        color: var(--text-body);
+        overflow-x: auto;
+        line-height: 1.75;
     }
 
-    /* ── Hide Streamlit chrome ─────────────────────── */
+    /* ── Streamlit widget label text ─────────────────────────────────────────  */
+    .stSelectbox label,
+    .stMultiSelect label,
+    .stFileUploader label,
+    .stDateInput label,
+    .stTextInput label,
+    .stExpander label,
+    [data-testid="stWidgetLabel"] {
+        color: var(--text-body) !important;
+        font-size: 0.85rem !important;
+        font-weight: 500 !important;
+    }
+
+    /* ── Expander ────────────────────────────────────────────────────────────  */
+    [data-testid="stExpander"] {
+        border: 1px solid var(--border) !important;
+        border-radius: 8px !important;
+        background: var(--surface) !important;
+    }
+    [data-testid="stExpander"] summary {
+        color: var(--text-body) !important;
+        font-weight: 500;
+        font-size: 0.88rem;
+    }
+
+    /* ── Info / warning / error / success banners ────────────────────────────  */
+    [data-testid="stAlert"] {
+        border-radius: 8px !important;
+        font-size: 0.875rem;
+    }
+
+    /* ── Dataframe / table header ────────────────────────────────────────────  */
+    [data-testid="stDataFrame"] thead th,
+    .dataframe thead th {
+        background-color: var(--navy) !important;
+        color: #FFFFFF !important;
+        font-size: 0.72rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        padding: 0.5rem 0.75rem !important;
+    }
+    [data-testid="stDataFrame"] tbody tr:nth-child(even) {
+        background-color: var(--surface-page) !important;
+    }
+    [data-testid="stDataFrame"] tbody td {
+        color: var(--text-body) !important;
+        font-size: 0.83rem !important;
+    }
+
+    /* ── Buttons (main area) ─────────────────────────────────────────────────  */
+    .stButton > button {
+        background: var(--blue) !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-size: 0.85rem !important;
+        font-weight: 500 !important;
+        padding: 0.45rem 1.1rem !important;
+        transition: opacity 0.15s;
+    }
+    .stButton > button:hover {
+        opacity: 0.88 !important;
+    }
+
+    /* ── Multiselect tags ────────────────────────────────────────────────────  */
+    [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+        background: var(--blue-light) !important;
+        color: var(--blue) !important;
+        border-radius: 4px !important;
+        font-size: 0.78rem !important;
+    }
+
+    /* ── Spinner text ────────────────────────────────────────────────────────  */
+    [data-testid="stSpinner"] p {
+        color: var(--text-muted) !important;
+        font-size: 0.85rem;
+    }
+
+    /* ── Caption text ────────────────────────────────────────────────────────  */
+    [data-testid="stCaptionContainer"] p,
+    .stCaption {
+        color: var(--text-muted) !important;
+        font-size: 0.8rem !important;
+    }
+
+    /* ── Code blocks ─────────────────────────────────────────────────────────  */
+    code, pre {
+        font-family: var(--font-mono) !important;
+        font-size: 0.8rem;
+        background: var(--surface-page);
+        color: var(--text-body);
+        border-radius: 4px;
+    }
+
+    /* ── Divider ─────────────────────────────────────────────────────────────  */
+    hr {
+        border-color: var(--border-light) !important;
+        margin: 0.75rem 0 !important;
+    }
+
+    /* ── Hide Streamlit chrome ───────────────────────────────────────────────  */
     #MainMenu, footer, header { visibility: hidden; }
     [data-testid="stDecoration"] { display: none; }
     </style>
     """, unsafe_allow_html=True)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# MOCK DATA GENERATORS
+# ──────────────────────────────────────────────────────────────────────────────
 def generate_mock_claims(n: int = 120) -> pd.DataFrame:
     """Generate synthetic claims data for dashboard analytics."""
     random.seed(42)
@@ -235,7 +462,7 @@ def mock_ocr_text(doc_type_hint: str = "hospital_bill") -> str:
     samples = {
         "hospital_bill": """
 CITY GENERAL HOSPITAL — PATIENT BILL
-Patient: Dhruva Sandeep
+Patient: Rajesh Kumar Sharma
 Policy No: TRV-2024-INS-88742
 Date of Admission: 14 March 2024    Date of Discharge: 19 March 2024
 Accident Date: 13 March 2024        Location: Bangkok, Thailand
@@ -244,7 +471,7 @@ Treatment: Surgical fixation, physiotherapy sessions
 Room Charges: ₹42,000   Surgical Charges: ₹1,18,500
 Medicines: ₹12,340      Consultation: ₹8,500
 TOTAL DUE: ₹1,81,340
-Nominee: Rani Ramnani (Spouse)
+Nominee: Priya Sharma (Spouse)
 Bank Account: HDFC Bank, A/C 50200012345678, IFSC HDFC0001234
 """,
         "death_certificate": """
@@ -260,7 +487,7 @@ Bank Account: SBI, A/C 31209876543, IFSC SBIN0007654
 """,
         "disability_report": """
 DISABILITY ASSESSMENT REPORT
-Patient: Sandeep Pillai     Policy No: TRV-2024-SEA-30019
+Patient: Santhosh Pillai     Policy No: TRV-2024-SEA-30019
 Date of Accident: 22 January 2024    Location: Kuala Lumpur, Malaysia
 Nature of Injury: Traumatic amputation of left index finger (M00.87)
 Disability %: 15% Permanent Partial Disability
@@ -274,6 +501,10 @@ Bank Account: Axis Bank, A/C 9170200012345678, IFSC UTIB0001234
     }
     return samples.get(doc_type_hint, samples["hospital_bill"])
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OLLAMA LLM INTEGRATION
+# ──────────────────────────────────────────────────────────────────────────────
 def ollama_generate(prompt: str, stream: bool = False) -> Optional[str]:
     """
     Call the local Ollama /api/generate endpoint.
@@ -303,6 +534,8 @@ def ollama_generate(prompt: str, stream: bool = False) -> Optional[str]:
         st.error(f"🔴 **Unexpected error calling LLM:** {e}")
     return None
 
+
+# ── Prompt Template 1: Document Classification ────────────────────────────────
 CLASSIFY_PROMPT = """You are an expert insurance document classifier.
 Given the OCR text of an insurance-related document, classify it into exactly one
 of these categories:
@@ -318,6 +551,8 @@ DOCUMENT TEXT:
 
 Category:"""
 
+
+# ── Prompt Template 2: Structured Data Extraction ─────────────────────────────
 EXTRACT_PROMPT = """You are a precise insurance data extraction engine.
 Extract the following fields from the document text and return a valid JSON object.
 If a field is not found, use null. Dates must be in ISO 8601 format (YYYY-MM-DD).
@@ -349,6 +584,8 @@ DOCUMENT TEXT:
 
 JSON:"""
 
+
+# ── Prompt Template 3: Fraud Detection Scoring ───────────────────────────────
 FRAUD_PROMPT = """You are a senior insurance fraud analyst specialising in Travel PA claims.
 Analyse the document text for anomalies and fraud indicators.
 
@@ -419,6 +656,11 @@ def score_fraud(text: str) -> Dict[str, Any]:
         st.warning("⚠️ LLM returned non-JSON output for fraud scoring; showing raw.")
         return {"raw_response": response}
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# RULE-BASED VALIDATION ENGINE
+# ──────────────────────────────────────────────────────────────────────────────
+
 # Simulated policy database
 MOCK_POLICIES: Dict[str, Dict] = {
     "TRV-2024-INS-88742": {
@@ -444,6 +686,7 @@ MOCK_POLICIES: Dict[str, Dict] = {
     },
 }
 
+# Simulated duplicate detection store (would be a DB in production)
 SUBMITTED_CLAIMS: List[str] = ["TRV-2024-INS-77001", "TRV-2024-GBL-11980"]
 
 
@@ -462,6 +705,7 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
     cost       = extracted.get("treatment_costs_inr")
     disability = extracted.get("disability_percent")
 
+    # ── Rule 1: Policy exists ─────────────────────────────────────────────────
     policy = MOCK_POLICIES.get(policy_no) if policy_no else None
     if not policy_no:
         results.append({"rule": "Policy Number Present", "status": "Fail",
@@ -473,6 +717,7 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
         results.append({"rule": "Policy Exists", "status": "Pass",
                          "message": f"Policy {policy_no} verified."})
 
+    # ── Rule 2: Insured name matches ──────────────────────────────────────────
     if policy and extracted.get("insured_name"):
         name_match = (
             extracted["insured_name"].strip().lower()
@@ -573,6 +818,10 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
 
     return results
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# HELPER UI COMPONENTS
+# ──────────────────────────────────────────────────────────────────────────────
 def badge_html(status: str) -> str:
     mapping = {
         "Pass"    : "badge-success",
@@ -600,22 +849,26 @@ def metric_card(label: str, value: str, delta: str = "", delta_up: bool = True) 
 
 def fraud_bar_html(score: float) -> str:
     if score < 30:
-        colour = "#00C9A7"
+        colour = "#0A7C5C"   # green — low risk
     elif score < 60:
-        colour = "#FFB830"
+        colour = "#D97706"   # amber — medium risk
     else:
-        colour = "#FF4757"
-    return f"""
-    <div class="fraud-bar-wrapper">
-        <div class="fraud-bar" style="width:{score}%; background:{colour};"></div>
-    </div>
-    <small style="color:var(--text-secondary);">{score:.1f} / 100</small>
-    """
+        colour = "#B91C1C"   # red   — high/critical
+    return (
+        f'<div class="fraud-bar-wrapper">'
+        f'<div class="fraud-bar" style="width:{score}%;background:{colour};"></div>'
+        f'</div>'
+        f'<div class="fraud-score-label">{score:.1f} / 100</div>'
+    )
 
 
 def section_header(title: str) -> None:
     st.markdown(f'<div class="section-header">{title}</div>', unsafe_allow_html=True)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PAGE: DASHBOARD (ANALYTICS)
+# ──────────────────────────────────────────────────────────────────────────────
 def page_dashboard(df: pd.DataFrame) -> None:
     st.markdown("## 📊 Claims Analytics Dashboard")
     st.markdown("Real-time overview of submitted travel PA insurance claims.")
@@ -677,27 +930,36 @@ def page_dashboard(df: pd.DataFrame) -> None:
     with ch1:
         status_counts = fdf["status"].value_counts().reset_index()
         status_counts.columns = ["Status", "Count"]
+        # Consistent status colour palette — readable on white
         color_map = {
-            "Approved"     : "#00C9A7",
-            "Pending"      : "#FFB830",
-            "Rejected"     : "#FF4757",
-            "Under Review" : "#00A3FF",
-            "Fraud Flagged": "#9333EA",
+            "Approved"     : "#0A7C5C",
+            "Pending"      : "#B07000",
+            "Rejected"     : "#B91C1C",
+            "Under Review" : "#1A6FE0",
+            "Fraud Flagged": "#7C3AED",
         }
+        # Shared layout defaults for all charts
+        chart_layout = dict(
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor ="rgba(0,0,0,0)",
+            font=dict(family="Inter, Segoe UI, sans-serif", color="#243550", size=12),
+            title_font=dict(size=13, color="#0D1F3C", family="Inter, Segoe UI, sans-serif"),
+            margin=dict(t=44, b=16, l=16, r=16),
+        )
+
         fig = px.pie(
             status_counts, names="Status", values="Count",
             color="Status", color_discrete_map=color_map,
             title="Claim Status Breakdown",
-            hole=0.55,
+            hole=0.58,
         )
-        fig.update_traces(textposition="outside", textinfo="label+percent")
-        fig.update_layout(
-            showlegend=False,
-            margin=dict(t=40, b=10, l=10, r=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor ="rgba(0,0,0,0)",
-            title_font_size=13,
+        fig.update_traces(
+            textposition="outside",
+            textinfo="label+percent",
+            textfont=dict(size=11, color="#243550"),
+            outsidetextfont=dict(size=11, color="#243550"),
         )
+        fig.update_layout(showlegend=False, **chart_layout)
         st.plotly_chart(fig, use_container_width=True)
 
     with ch2:
@@ -714,14 +976,13 @@ def page_dashboard(df: pd.DataFrame) -> None:
             title="Total Claim Value by Coverage Type",
             labels={"claim_amount": "Amount (₹)", "coverage_type": ""},
             color="claim_amount",
-            color_continuous_scale=["#DBEAFE", "#0A2540"],
+            color_continuous_scale=["#B8D0F0", "#0D1F3C"],
         )
         fig2.update_layout(
             coloraxis_showscale=False,
-            margin=dict(t=40, b=10, l=10, r=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor ="rgba(0,0,0,0)",
-            title_font_size=13,
+            xaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
+            yaxis=dict(tickfont=dict(color="#243550")),
+            **chart_layout,
         )
         st.plotly_chart(fig2, use_container_width=True)
 
@@ -745,11 +1006,14 @@ def page_dashboard(df: pd.DataFrame) -> None:
             labels={"month": "Month", "count": "Claims"},
         )
         fig3.update_layout(
-            margin=dict(t=40, b=10, l=10, r=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor ="rgba(0,0,0,0)",
-            title_font_size=13,
-            legend_title_text="",
+            xaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
+            yaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
+            legend=dict(
+                title_text="",
+                font=dict(color="#243550", size=11),
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            **chart_layout,
         )
         st.plotly_chart(fig3, use_container_width=True)
 
@@ -766,13 +1030,15 @@ def page_dashboard(df: pd.DataFrame) -> None:
             title="Geography: Volume vs Avg Fraud Score",
             labels={"claims": "Claim Count", "avg_fraud": "Avg Fraud Score"},
         )
-        fig4.update_traces(textposition="top center")
+        fig4.update_traces(
+            textposition="top center",
+            textfont=dict(size=10, color="#243550"),
+        )
         fig4.update_layout(
             showlegend=False,
-            margin=dict(t=40, b=10, l=10, r=10),
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor ="rgba(0,0,0,0)",
-            title_font_size=13,
+            xaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
+            yaxis=dict(gridcolor="#EAF0F8", tickfont=dict(color="#5A6E89")),
+            **chart_layout,
         )
         st.plotly_chart(fig4, use_container_width=True)
 
@@ -797,6 +1063,10 @@ def page_dashboard(df: pd.DataFrame) -> None:
         hide_index=True,
     )
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PAGE: CLAIM INGESTION
+# ──────────────────────────────────────────────────────────────────────────────
 def page_ingestion() -> None:
     st.markdown("## 📥 Claim Document Ingestion")
     st.markdown(
@@ -834,10 +1104,12 @@ def page_ingestion() -> None:
             st.markdown('<div class="card">', unsafe_allow_html=True)
             c1, c2 = st.columns([3, 1])
             with c1:
-                st.markdown(f"**{file.name}**  "
-                            f"<span style='color:var(--text-secondary);font-size:0.82rem;'>"
-                            f"{file.size / 1024:.1f} KB · {file.type}</span>",
-                            unsafe_allow_html=True)
+                st.markdown(
+                    f"**{file.name}**&nbsp; "
+                    f"<span style='color:#5A6E89;font-size:0.8rem;font-weight:400;'>"
+                    f"{file.size / 1024:.1f} KB &nbsp;·&nbsp; {file.type}</span>",
+                    unsafe_allow_html=True,
+                )
             with c2:
                 # Preview image if possible
                 if file.type.startswith("image/"):
@@ -875,6 +1147,10 @@ def page_ingestion() -> None:
             "Proceed to **Processing & Extraction** in the sidebar."
         )
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PAGE: PROCESSING & EXTRACTION
+# ──────────────────────────────────────────────────────────────────────────────
 def page_processing() -> None:
     st.markdown("## ⚙️ Processing & Data Extraction")
     st.markdown(
@@ -936,6 +1212,10 @@ def page_processing() -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PAGE: VALIDATION
+# ──────────────────────────────────────────────────────────────────────────────
 def page_validation() -> None:
     st.markdown("## ✅ Claim Validation")
     st.markdown("Run policy rule checks against extracted claim data.")
@@ -994,7 +1274,7 @@ def page_validation() -> None:
                 icon   = "✅" if r["status"] == "Pass" else ("❌" if r["status"] == "Fail" else "⚠️")
                 st.markdown(
                     f"{icon} &nbsp; **{r['rule']}** &nbsp; {badge}  \n"
-                    f"<small style='color:var(--text-secondary);'>{r['message']}</small>",
+                    f"<small style='color:#5A6E89;'>{r['message']}</small>",
                     unsafe_allow_html=True,
                 )
                 st.divider()
@@ -1010,6 +1290,10 @@ def page_validation() -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PAGE: AI FRAUD SCORING
+# ──────────────────────────────────────────────────────────────────────────────
 def page_fraud_scoring() -> None:
     st.markdown("## 🕵️ AI Fraud Detection & Scoring")
     st.markdown(
@@ -1051,9 +1335,14 @@ def page_fraud_scoring() -> None:
                 fc1, fc2 = st.columns([1, 2])
                 with fc1:
                     section_header("Fraud Score")
+                    score_colour = (
+                        "#B91C1C" if score >= 60
+                        else "#7A4F00" if score >= 30
+                        else "#0A7C5C"
+                    )
                     st.markdown(
-                        f'<div style="font-size:3rem;font-weight:800;color:'
-                        f'{"#FF4757" if score >= 60 else "#FFB830" if score >= 30 else "#00C9A7"};">'
+                        f'<div style="font-size:2.8rem;font-weight:700;'
+                        f'color:{score_colour};letter-spacing:-0.03em;">'
                         f'{score}</div>',
                         unsafe_allow_html=True,
                     )
@@ -1090,20 +1379,24 @@ def page_fraud_scoring() -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SIDEBAR NAVIGATION
+# ──────────────────────────────────────────────────────────────────────────────
 def render_sidebar() -> str:
     with st.sidebar:
         # Logo / Brand
         st.markdown("""
-        <div style="padding:1.2rem 0 1rem;">
-            <div style="font-size:1.5rem;font-weight:800;letter-spacing:-0.02em;">
+        <div style="padding:1.4rem 1rem 1rem;">
+            <div style="font-size:1.25rem;font-weight:700;letter-spacing:-0.02em;color:#FFFFFF;">
                 🛡️ MarvelAI
             </div>
-            <div style="font-size:0.72rem;opacity:0.65;letter-spacing:0.12em;
-                        text-transform:uppercase;margin-top:0.2rem;">
+            <div style="font-size:0.68rem;color:rgba(255,255,255,0.5);letter-spacing:0.13em;
+                        text-transform:uppercase;margin-top:0.25rem;">
                 Travel PA Claims Portal
             </div>
-            <hr style="border-color:rgba(255,255,255,0.15);margin:0.9rem 0 0.5rem;">
         </div>
+        <hr style="border:none;border-top:1px solid rgba(255,255,255,0.1);margin:0 1rem 0.75rem;">
         """, unsafe_allow_html=True)
 
         # LLM status indicator
@@ -1115,12 +1408,16 @@ def render_sidebar() -> str:
 
         if llm_ok:
             st.markdown(
-                '🟢 <span style="font-size:0.78rem;">Ollama LLM Online</span>',
+                '<div style="padding:0 1rem 0.5rem;">'
+                '<span style="font-size:0.75rem;color:rgba(255,255,255,0.55);">'
+                '● <span style="color:#4ADE9F;">Online</span> &nbsp;·&nbsp; llama3.2</span></div>',
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
-                '🔴 <span style="font-size:0.78rem;">Ollama Offline — AI features limited</span>',
+                '<div style="padding:0 1rem 0.5rem;">'
+                '<span style="font-size:0.75rem;color:rgba(255,255,255,0.55);">'
+                '● <span style="color:#F87171;">Offline</span> &nbsp;·&nbsp; Ollama not running</span></div>',
                 unsafe_allow_html=True,
             )
 
@@ -1141,30 +1438,40 @@ def render_sidebar() -> str:
             label_visibility="collapsed",
         )
 
-        st.markdown("<br><hr style='border-color:rgba(255,255,255,0.12);'>", unsafe_allow_html=True)
+        st.markdown(
+            "<hr style='border:none;border-top:1px solid rgba(255,255,255,0.1);"
+            "margin:0.75rem 0;'>",
+            unsafe_allow_html=True,
+        )
 
         # Session info
         doc_count = len([k for k in st.session_state if k.startswith("ocr_")])
         st.markdown(
-            f'<div style="font-size:0.75rem;opacity:0.6;">'
-            f'📂 {doc_count} document(s) in session</div>',
+            f'<div style="padding:0 0.25rem 0.5rem;font-size:0.75rem;'
+            f'color:rgba(255,255,255,0.45);">'
+            f'📂 &nbsp;{doc_count} document(s) in session</div>',
             unsafe_allow_html=True,
         )
 
-        if st.button("🗑 Clear Session", use_container_width=True):
+        if st.button("Clear Session", use_container_width=True):
             for k in list(st.session_state.keys()):
                 del st.session_state[k]
             st.rerun()
 
         # Version footer
         st.markdown(
-            '<div style="font-size:0.68rem;opacity:0.4;margin-top:2rem;text-align:center;">'
-            'MarvelAI Claims Portal v1.0<br>Powered by llama3.2 (Ollama)</div>',
+            '<div style="font-size:0.65rem;color:rgba(255,255,255,0.28);'
+            'margin-top:2rem;text-align:center;padding-bottom:1rem;">'
+            'v1.0 &nbsp;·&nbsp; llama3.2 (Ollama)</div>',
             unsafe_allow_html=True,
         )
 
         return pages[selected_label]
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MAIN ENTRYPOINT
+# ──────────────────────────────────────────────────────────────────────────────
 def main() -> None:
     inject_css()
 
