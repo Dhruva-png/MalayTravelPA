@@ -2082,6 +2082,96 @@ def page_fraud_scoring() -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 # PAGE: CLAIM REPORT
 # ──────────────────────────────────────────────────────────────────────────────
+def _excel_value(value: Any) -> Any:
+    """Return a spreadsheet-safe representation of an extracted value."""
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    if isinstance(value, (dict, tuple)):
+        return json.dumps(value, ensure_ascii=False)
+    return "" if value is None else value
+
+
+def _report_excel_bytes(
+    filename: str,
+    meta: dict,
+    doc_type: str,
+    extracted: dict,
+    val_results: list,
+    fraud: dict,
+) -> bytes:
+    """Create a formatted Excel workbook containing the claim report data."""
+    try:
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+    except ImportError as exc:
+        raise RuntimeError(
+            "Excel export requires openpyxl. Install it with: pip install openpyxl"
+        ) from exc
+
+    claim_ref = meta.get("claim_ref", "N/A")
+    generated_at = datetime.now().strftime("%d %b %Y %H:%M")
+    fail_count = sum(rule.get("status") == "Fail" for rule in val_results)
+    warning_count = sum(rule.get("status") == "Warning" for rule in val_results)
+    verdict = (
+        "Eligible for processing" if fail_count == 0 and warning_count == 0
+        else "Requires manual review" if fail_count else "Secondary verification recommended"
+    )
+
+    summary_df = pd.DataFrame([
+        ("Claim reference", claim_ref),
+        ("Source document", filename),
+        ("Document type", doc_type),
+        ("Uploaded", meta.get("upload_ts", "")),
+        ("Extraction method", meta.get("ocr_method", meta.get("extraction_method", "N/A"))),
+        ("Generated", generated_at),
+        ("Validation verdict", verdict),
+        ("Fraud score", fraud.get("fraud_score", "Not run")),
+        ("Fraud risk level", fraud.get("risk_level", "Not run")),
+    ], columns=["Report item", "Value"])
+    extracted_df = pd.DataFrame([
+        {"Field": key.replace("_", " ").title(), "Value": _excel_value(value)}
+        for key, value in extracted.items()
+    ])
+    validation_df = pd.DataFrame(val_results or [], columns=["rule", "status", "message"])
+    validation_df = validation_df.rename(columns={
+        "rule": "Rule", "status": "Status", "message": "Details"
+    })
+    fraud_df = pd.DataFrame([
+        ("Fraud score", _excel_value(fraud.get("fraud_score", "Not run"))),
+        ("Risk level", _excel_value(fraud.get("risk_level", "Not run"))),
+        ("Flags", _excel_value(fraud.get("flags", []))),
+        ("Assessment", _excel_value(fraud.get("summary", ""))),
+    ], columns=["Assessment item", "Value"])
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, sheet_name="Summary", index=False)
+        extracted_df.to_excel(writer, sheet_name="Extracted Data", index=False)
+        validation_df.to_excel(writer, sheet_name="Validation", index=False)
+        fraud_df.to_excel(writer, sheet_name="Fraud Review", index=False)
+
+        header_fill = PatternFill("solid", fgColor="1F6F68")
+        header_font = Font(color="FFFFFF", bold=True)
+        for worksheet in writer.book.worksheets:
+            worksheet.freeze_panes = "A2"
+            worksheet.auto_filter.ref = worksheet.dimensions
+            for cell in worksheet[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(vertical="center")
+            for column_cells in worksheet.columns:
+                width = min(
+                    max(len(str(cell.value or "")) for cell in column_cells) + 2,
+                    60,
+                )
+                worksheet.column_dimensions[get_column_letter(column_cells[0].column)].width = width
+            for row in worksheet.iter_rows(min_row=2):
+                for cell in row:
+                    cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    return output.getvalue()
+
+
 def _report_html(filename: str, meta: dict, doc_type: str,
                  extracted: dict, val_results: list, fraud: dict) -> str:
     """Build a self-contained HTML report string for one claim."""
@@ -2390,6 +2480,20 @@ def page_report() -> None:
                 key=f"dl_{filename}",
                 use_container_width=True,
             )
+            try:
+                workbook = _report_excel_bytes(
+                    filename, meta, doc_type, extracted, val_results, fraud
+                )
+                st.download_button(
+                    label="Download Excel",
+                    data=workbook,
+                    file_name=f"claim_report_{safe_name}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_excel_{filename}",
+                    use_container_width=True,
+                )
+            except RuntimeError as exc:
+                st.caption(str(exc))
 
         # ── Inline preview ────────────────────────────────────────────────────
         with st.expander("👁 Preview report inline"):
