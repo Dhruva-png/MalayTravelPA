@@ -39,6 +39,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import streamlit.components.v1
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG  (must be first Streamlit call)
@@ -1703,32 +1704,53 @@ def page_ingestion() -> None:
                     unsafe_allow_html=True,
                 )
             with c2:
-                # Preview image if possible
                 if file.type.startswith("image/"):
                     st.image(file, use_container_width=True)
                 else:
                     st.markdown("📄 PDF document")
 
-            # Store OCR text and file metadata in session state
             ocr_key  = f"ocr_{file.name}"
             meta_key = f"meta_{file.name}"
+
+            # Only extract once per file (re-upload clears the key)
             if ocr_key not in st.session_state:
-                st.session_state[ocr_key]  = mock_ocr_text(mock_type_map[selected_mock])
+                with st.spinner(f"Extracting text from {file.name}…"):
+                    extracted_text, warning, method = extract_uploaded_document_text(file)
+
+                # If real extraction yielded nothing, fall back to the demo mock
+                if not extracted_text.strip():
+                    extracted_text = mock_ocr_text(mock_type_map[selected_mock])
+                    method = f"Demo mock ({selected_mock}) — real extraction returned empty"
+                    if warning:
+                        st.warning(f"⚠️ Extraction note: {warning}")
+                    st.info(
+                        "ℹ️ No text could be extracted from the uploaded file "
+                        f"(it may be scanned without OCR). Loaded **demo content** "
+                        f"for '{selected_mock}' so you can still explore the pipeline."
+                    )
+                else:
+                    if warning:
+                        st.warning(f"⚠️ Extraction note: {warning}")
+                    st.success(f"✅ Text extracted via **{method}** ({len(extracted_text):,} chars)")
+
+                st.session_state[ocr_key]  = extracted_text
                 st.session_state[meta_key] = {
                     "filename"   : file.name,
                     "size_kb"    : round(file.size / 1024, 1),
                     "upload_ts"  : datetime.now().isoformat(),
                     "claim_ref"  : f"CLM-{uuid.uuid4().hex[:8].upper()}",
+                    "ocr_method" : method,
                 }
 
             meta = st.session_state[meta_key]
             st.markdown(
                 f"**Claim Ref:** `{meta['claim_ref']}`  &nbsp;|&nbsp;  "
-                f"**Uploaded:** {meta['upload_ts'][:19].replace('T', ' ')}",
+                f"**Uploaded:** {meta['upload_ts'][:19].replace('T', ' ')}  &nbsp;|&nbsp;  "
+                f"**Method:** {meta.get('ocr_method', 'N/A')}",
                 unsafe_allow_html=True,
             )
 
-            with st.expander("🔍 View Extracted OCR Text"):
+            with st.expander("🔍 View Extracted Text"):
                 st.code(st.session_state[ocr_key], language="text")
 
             st.markdown("</div>", unsafe_allow_html=True)
@@ -1743,6 +1765,20 @@ def page_ingestion() -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 # PAGE: PROCESSING & EXTRACTION
 # ──────────────────────────────────────────────────────────────────────────────
+def _render_json_pre(data: dict) -> None:
+    """Render a dict as a styled, light-themed <pre> block."""
+    import json as _json
+    json_str = _json.dumps(data, indent=2, ensure_ascii=False)
+    escaped  = json_str.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    st.markdown(
+        f'''<pre style="background:#F4F0E8;border:1px solid #D6CEC0;border-radius:8px;
+        padding:1rem 1.1rem;font-family:'JetBrains Mono','Fira Code',Consolas,monospace;
+        font-size:0.78rem;color:#344054;line-height:1.75;overflow-x:auto;
+        white-space:pre-wrap;word-break:break-word;">{escaped}</pre>''',
+        unsafe_allow_html=True,
+    )
+
+
 def page_processing() -> None:
     page_hero(
         "Processing & Data Extraction",
@@ -1750,64 +1786,122 @@ def page_processing() -> None:
         "AI document operations",
     )
 
-    # Collect ingested documents from session state
     ocr_keys = [k for k in st.session_state if k.startswith("ocr_")]
     if not ocr_keys:
         st.warning("No documents ingested yet. Go to **Claim Ingestion** first.")
         return
+
+    # ── "Process All" shortcut ────────────────────────────────────────────────
+    if st.button("⚡ Process All Documents", type="primary", use_container_width=False):
+        for ocr_key in ocr_keys:
+            filename = ocr_key.replace("ocr_", "")
+            text = st.session_state[ocr_key]
+            with st.spinner(f"Classifying {filename}…"):
+                st.session_state[f"cls_{filename}"] = classify_document(text)
+            with st.spinner(f"Extracting fields from {filename}…"):
+                st.session_state[f"ext_{filename}"] = extract_data(text)
+        st.success("All documents processed.")
+        st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     for ocr_key in ocr_keys:
         filename = ocr_key.replace("ocr_", "")
         meta_key = f"meta_{filename}"
         meta     = st.session_state.get(meta_key, {})
         text     = st.session_state[ocr_key]
+        cls_key  = f"cls_{filename}"
+        ext_key  = f"ext_{filename}"
 
-        st.markdown(f'<div class="card">', unsafe_allow_html=True)
-        st.markdown(f"### 📄 {filename}")
-        st.markdown(f"Claim Ref: `{meta.get('claim_ref', 'N/A')}`")
+        already_done = cls_key in st.session_state and ext_key in st.session_state
 
-        col_cls, col_ext = st.columns(2)
+        st.markdown('<div class="card">', unsafe_allow_html=True)
 
-        # ── Classification ────────────────────────────────────────────────────
-        with col_cls:
+        hdr_col, btn_col = st.columns([4, 1])
+        with hdr_col:
+            st.markdown(f"### 📄 {filename}")
+            st.markdown(
+                f"Claim Ref: `{meta.get('claim_ref', 'N/A')}`  &nbsp;·&nbsp;  "
+                f"{len(text):,} characters of extracted text",
+                unsafe_allow_html=True,
+            )
+        with btn_col:
+            run_label = "🔄 Re-process" if already_done else "▶ Process"
+            if st.button(run_label, key=f"btn_proc_{filename}"):
+                with st.spinner("Classifying…"):
+                    st.session_state[cls_key] = classify_document(text)
+                with st.spinner("Extracting structured fields…"):
+                    st.session_state[ext_key] = extract_data(text)
+                st.rerun()
+
+        # Show results only once both steps have run
+        if cls_key in st.session_state:
             section_header("Step 1 · Document Classification")
-            cls_key = f"cls_{filename}"
-            if st.button(f"🏷 Classify", key=f"btn_cls_{filename}"):
-                with st.spinner("Sending to LLM for classification…"):
-                    doc_type = classify_document(text)
-                    st.session_state[cls_key] = doc_type
-            if cls_key in st.session_state:
-                st.markdown(
-                    f"**Detected Type:** "
-                    f"{badge_html(st.session_state[cls_key])}",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.caption("Click **Classify** to detect document type.")
+            st.markdown(
+                f"**Detected Type:** {badge_html(st.session_state[cls_key])}",
+                unsafe_allow_html=True,
+            )
 
-        # ── Extraction ────────────────────────────────────────────────────────
-        with col_ext:
+        if ext_key in st.session_state:
+            st.markdown("<br>", unsafe_allow_html=True)
             section_header("Step 2 · Structured Data Extraction")
-            ext_key = f"ext_{filename}"
-            if st.button(f"🔎 Extract Data", key=f"btn_ext_{filename}"):
-                with st.spinner("LLM extracting structured fields…"):
-                    extracted = extract_data(text)
-                    st.session_state[ext_key] = extracted
-            if ext_key in st.session_state:
-                extracted = st.session_state[ext_key]
-                import json as _json
-                json_str = _json.dumps(extracted, indent=2, ensure_ascii=False)
-                # Render as styled HTML so the light theme applies correctly
-                escaped = json_str.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            extracted = st.session_state[ext_key]
+            if "raw_response" in extracted:
+                st.warning("LLM returned non-JSON; showing raw response:")
+                st.code(extracted["raw_response"], language="text")
+            else:
+                # Render each field as a readable key-value grid
+                field_labels = {
+                    "policy_number"       : "Policy Number",
+                    "insured_name"        : "Insured Name",
+                    "nominee_name"        : "Nominee Name",
+                    "nominee_relation"    : "Nominee Relation",
+                    "accident_date"       : "Accident Date",
+                    "accident_location"   : "Accident Location",
+                    "nature_of_injury"    : "Nature of Injury",
+                    "diagnosis_codes"     : "Diagnosis Codes (ICD-10)",
+                    "admission_date"      : "Admission Date",
+                    "discharge_date"      : "Discharge Date",
+                    "treatment_costs_inr" : "Treatment Costs (₹)",
+                    "disability_percent"  : "Disability %",
+                    "bank_account_number" : "Bank Account",
+                    "bank_name"           : "Bank Name",
+                    "bank_ifsc"           : "IFSC Code",
+                }
+                rows = []
+                for key, label in field_labels.items():
+                    val = extracted.get(key)
+                    if isinstance(val, list):
+                        val = ", ".join(str(v) for v in val) if val else "—"
+                    elif val is None or val == "":
+                        val = "—"
+                    rows.append((label, str(val)))
+
+                # Render as a two-column HTML table
+                cells_html = "".join(
+                    f'''<tr>
+                      <td style="padding:0.45rem 0.9rem;font-size:0.78rem;font-weight:600;
+                                 color:#5A6E89;white-space:nowrap;border-bottom:1px solid #EEE9E0;
+                                 width:38%;">{label}</td>
+                      <td style="padding:0.45rem 0.9rem;font-size:0.82rem;color:#172033;
+                                 border-bottom:1px solid #EEE9E0;">{value}</td>
+                    </tr>'''
+                    for label, value in rows
+                )
                 st.markdown(
-                    f"""<pre style="background:#F4F0E8;border:1px solid #D6CEC0;border-radius:8px;
-                    padding:1rem 1.1rem;font-family:'JetBrains Mono','Fira Code',Consolas,monospace;
-                    font-size:0.78rem;color:#344054;line-height:1.75;overflow-x:auto;
-                    white-space:pre-wrap;word-break:break-word;">{escaped}</pre>""",
+                    f'''<div style="overflow-x:auto;border-radius:8px;border:1px solid #D6CEC0;">
+                      <table style="width:100%;border-collapse:collapse;background:#FFFFFF;
+                                    font-family:Inter,Segoe UI,sans-serif;">
+                        {cells_html}
+                      </table>
+                    </div>''',
                     unsafe_allow_html=True,
                 )
-            else:
-                st.caption("Click **Extract Data** to pull structured fields.")
+                with st.expander("📋 View raw JSON"):
+                    _render_json_pre(extracted)
+
+        if not (cls_key in st.session_state or ext_key in st.session_state):
+            st.caption("Click **▶ Process** to classify this document and extract fields.")
 
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
@@ -1983,6 +2077,394 @@ def page_fraud_scoring() -> None:
         st.markdown("<br>", unsafe_allow_html=True)
 
 
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PAGE: CLAIM REPORT
+# ──────────────────────────────────────────────────────────────────────────────
+def _report_html(filename: str, meta: dict, doc_type: str,
+                 extracted: dict, val_results: list, fraud: dict) -> str:
+    """Build a self-contained HTML report string for one claim."""
+    import html as _html
+
+    claim_ref  = meta.get("claim_ref", "N/A")
+    upload_ts  = meta.get("upload_ts", "")[:19].replace("T", " ")
+    ocr_method = meta.get("ocr_method", "N/A")
+
+    # ── Extracted fields table ────────────────────────────────────────────────
+    field_labels = {
+        "policy_number"       : "Policy Number",
+        "insured_name"        : "Insured Name",
+        "nominee_name"        : "Nominee Name",
+        "nominee_relation"    : "Nominee Relation",
+        "accident_date"       : "Accident Date",
+        "accident_location"   : "Accident Location",
+        "nature_of_injury"    : "Nature of Injury",
+        "diagnosis_codes"     : "Diagnosis Codes",
+        "admission_date"      : "Admission Date",
+        "discharge_date"      : "Discharge Date",
+        "treatment_costs_inr" : "Treatment Costs (₹)",
+        "disability_percent"  : "Disability %",
+        "bank_account_number" : "Bank Account",
+        "bank_name"           : "Bank",
+        "bank_ifsc"           : "IFSC Code",
+    }
+    ext_rows = ""
+    for key, label in field_labels.items():
+        val = extracted.get(key)
+        if isinstance(val, list):
+            val = ", ".join(str(v) for v in val) if val else "—"
+        elif val is None or val == "":
+            val = "—"
+        ext_rows += f"""
+        <tr>
+          <td style="padding:6px 12px;font-weight:600;color:#5A6E89;
+                     width:38%;border-bottom:1px solid #EEE9E0;">{label}</td>
+          <td style="padding:6px 12px;color:#172033;
+                     border-bottom:1px solid #EEE9E0;">{_html.escape(str(val))}</td>
+        </tr>"""
+
+    # ── Validation results table ───────────────────────────────────────────────
+    status_colours = {"Pass": "#1F7A4D", "Fail": "#B2382F", "Warning": "#A86512"}
+    status_bg      = {"Pass": "#E9F6EE", "Fail": "#FCEDEA", "Warning": "#FFF8E8"}
+    val_rows = ""
+    passes = fails = warnings = 0
+    for r in val_results:
+        s = r["status"]
+        passes   += s == "Pass"
+        fails    += s == "Fail"
+        warnings += s == "Warning"
+        fg = status_colours.get(s, "#344054")
+        bg = status_bg.get(s, "#F4F0E8")
+        val_rows += f"""
+        <tr>
+          <td style="padding:6px 12px;border-bottom:1px solid #EEE9E0;color:#172033;">
+              {_html.escape(r["rule"])}</td>
+          <td style="padding:6px 12px;border-bottom:1px solid #EEE9E0;">
+              <span style="background:{bg};color:{fg};padding:2px 10px;border-radius:999px;
+                           font-size:0.72rem;font-weight:700;">{s}</span></td>
+          <td style="padding:6px 12px;border-bottom:1px solid #EEE9E0;color:#5A6E89;
+                     font-size:0.8rem;">{_html.escape(r["message"])}</td>
+        </tr>"""
+
+    val_summary = (
+        f"{passes} passed &nbsp;·&nbsp; {fails} failed &nbsp;·&nbsp; {warnings} warnings"
+    )
+    overall_verdict = (
+        "✅ ELIGIBLE FOR PROCESSING" if fails == 0 and warnings == 0
+        else ("🚫 REQUIRES MANUAL REVIEW" if fails > 0
+              else "⚠️ SECONDARY VERIFICATION RECOMMENDED")
+    )
+    verdict_colour = "#1F7A4D" if fails == 0 and warnings == 0 else (
+        "#B2382F" if fails > 0 else "#A86512"
+    )
+
+    # ── Fraud section ─────────────────────────────────────────────────────────
+    fraud_score = fraud.get("fraud_score", "N/A")
+    risk_level  = fraud.get("risk_level", "N/A")
+    flags       = fraud.get("flags", [])
+    fraud_summary = fraud.get("summary", "N/A")
+    fraud_bar_pct = fraud_score if isinstance(fraud_score, (int, float)) else 0
+    fraud_bar_col = (
+        "#B91C1C" if fraud_bar_pct >= 60
+        else "#D97706" if fraud_bar_pct >= 30
+        else "#0A7C5C"
+    )
+    flags_html = "".join(
+        f'<li style="margin:4px 0;color:#344054;">🚩 {_html.escape(f)}</li>'
+        for f in flags
+    ) or '<li style="color:#1F7A4D;">✅ No specific flags raised.</li>'
+
+    risk_colours = {
+        "Low": ("#E9F6EE", "#1F7A4D"),
+        "Medium": ("#FFF8E8", "#A86512"),
+        "High": ("#FCEDEA", "#B2382F"),
+        "Critical": ("#FCEDEA", "#B2382F"),
+    }
+    rl_bg, rl_fg = risk_colours.get(risk_level, ("#F4F0E8", "#344054"))
+
+    recommendation = (
+        "Proceed with standard processing." if fraud_bar_pct < 30
+        else ("Additional verification recommended." if fraud_bar_pct < 60
+              else "ESCALATE TO SPECIAL INVESTIGATIONS UNIT (SIU).")
+    )
+
+    # ── Assemble full HTML ────────────────────────────────────────────────────
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Claim Report — {claim_ref}</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: Inter, Segoe UI, Arial, sans-serif; font-size: 13px;
+          color: #172033; background: #FFFFFF; padding: 32px 40px; }}
+  h1 {{ font-size: 1.55rem; font-weight: 800; color: #172033; }}
+  h2 {{ font-size: 0.95rem; font-weight: 700; color: #172033;
+        text-transform: uppercase; letter-spacing: 0.08em;
+        border-bottom: 2px solid #C98A2E; padding-bottom: 6px;
+        margin: 28px 0 14px; }}
+  table {{ width: 100%; border-collapse: collapse; background: #FFFFFF; }}
+  .badge {{ display: inline-block; padding: 2px 10px; border-radius: 999px;
+            font-size: 0.7rem; font-weight: 700; }}
+  .header-bar {{ display: flex; justify-content: space-between;
+                 align-items: flex-start; margin-bottom: 24px; }}
+  .header-meta {{ font-size: 0.8rem; color: #5A6E89; line-height: 1.8; }}
+  .fraud-bar-outer {{ background: #EEE9E0; border-radius: 999px;
+                      height: 12px; width: 100%; margin: 6px 0; }}
+  .fraud-bar-inner {{ height: 12px; border-radius: 999px;
+                      background: {fraud_bar_col};
+                      width: {fraud_bar_pct}%; }}
+  .verdict {{ font-size: 0.92rem; font-weight: 700; color: {verdict_colour};
+              background: {"#E9F6EE" if verdict_colour == "#1F7A4D" else ("#FCEDEA" if verdict_colour == "#B2382F" else "#FFF8E8")};
+              padding: 10px 16px; border-radius: 8px; margin-top: 12px; }}
+  .footer {{ margin-top: 36px; font-size: 0.7rem; color: #A0AEC0;
+             border-top: 1px solid #EEE9E0; padding-top: 10px; }}
+  @media print {{ body {{ padding: 12px 16px; }} }}
+</style>
+</head>
+<body>
+
+<div class="header-bar">
+  <div>
+    <div style="font-size:0.72rem;font-weight:700;color:#C98A2E;
+                letter-spacing:0.13em;text-transform:uppercase;margin-bottom:4px;">
+        MarvelAI · Travel PA Claims Portal
+    </div>
+    <h1>Claim Analysis Report</h1>
+    <div style="margin-top:8px;font-size:0.88rem;color:#5A6E89;">
+        {_html.escape(filename)} &nbsp;·&nbsp;
+        <span style="background:#EAF1FB;color:#2E5EAA;padding:2px 9px;border-radius:999px;
+                     font-size:0.72rem;font-weight:700;">{_html.escape(doc_type)}</span>
+    </div>
+  </div>
+  <div class="header-meta" style="text-align:right;">
+    <strong>Claim Ref</strong>&nbsp; {claim_ref}<br>
+    <strong>Uploaded</strong>&nbsp; {upload_ts}<br>
+    <strong>Extraction</strong>&nbsp; {_html.escape(ocr_method)}<br>
+    <strong>Generated</strong>&nbsp; {datetime.now().strftime("%d %b %Y %H:%M")}
+  </div>
+</div>
+
+<!-- ── Extracted Claim Data ────────────────────────────────────────────── -->
+<h2>Extracted Claim Data</h2>
+<table>
+  <tbody>{ext_rows}</tbody>
+</table>
+
+<!-- ── Validation Results ─────────────────────────────────────────────── -->
+<h2>Validation Results &nbsp;<span style="font-size:0.78rem;font-weight:400;
+    color:#5A6E89;text-transform:none;letter-spacing:0;">{val_summary}</span></h2>
+<table>
+  <thead>
+    <tr style="background:#F0EAE0;">
+      <th style="padding:7px 12px;text-align:left;font-size:0.72rem;font-weight:700;
+                 text-transform:uppercase;color:#5A6E89;letter-spacing:0.06em;width:35%;">Rule</th>
+      <th style="padding:7px 12px;text-align:left;font-size:0.72rem;font-weight:700;
+                 text-transform:uppercase;color:#5A6E89;letter-spacing:0.06em;width:12%;">Status</th>
+      <th style="padding:7px 12px;text-align:left;font-size:0.72rem;font-weight:700;
+                 text-transform:uppercase;color:#5A6E89;letter-spacing:0.06em;">Details</th>
+    </tr>
+  </thead>
+  <tbody>{val_rows}</tbody>
+</table>
+<div class="verdict">{overall_verdict}</div>
+
+<!-- ── Fraud Scoring ──────────────────────────────────────────────────── -->
+<h2>Fraud Risk Assessment</h2>
+<table>
+  <tr>
+    <td style="padding:8px 12px;width:50%;vertical-align:top;">
+      <div style="font-size:2.4rem;font-weight:800;color:{fraud_bar_col};
+                  letter-spacing:-0.03em;">{fraud_score}</div>
+      <div style="font-size:0.72rem;color:#5A6E89;margin-bottom:4px;">Fraud Score (0–100)</div>
+      <div class="fraud-bar-outer"><div class="fraud-bar-inner"></div></div>
+      <div style="margin-top:8px;">
+        Risk Level: &nbsp;
+        <span class="badge" style="background:{rl_bg};color:{rl_fg};">{risk_level}</span>
+      </div>
+    </td>
+    <td style="padding:8px 12px;vertical-align:top;">
+      <strong style="font-size:0.78rem;color:#5A6E89;text-transform:uppercase;
+                     letter-spacing:0.07em;">Flags Detected</strong>
+      <ul style="margin-top:8px;padding-left:18px;">{flags_html}</ul>
+      <div style="margin-top:12px;font-size:0.82rem;color:#344054;">
+        <strong>Assessment:</strong> {_html.escape(fraud_summary)}
+      </div>
+      <div style="margin-top:8px;font-size:0.82rem;font-weight:700;color:{fraud_bar_col};">
+        Recommendation: {recommendation}
+      </div>
+    </td>
+  </tr>
+</table>
+
+<div class="footer">
+  MarvelAI Travel PA Claims Portal · Auto-generated report · {datetime.now().strftime("%d %b %Y %H:%M UTC")}
+</div>
+
+</body>
+</html>"""
+
+
+def page_report() -> None:
+    page_hero(
+        "Claim Analysis Report",
+        "Compile extracted data, validation results, and fraud scores into a downloadable report for each processed claim.",
+        "Report generation",
+    )
+
+    ocr_keys = [k for k in st.session_state if k.startswith("ocr_")]
+    if not ocr_keys:
+        st.warning("No documents in session. Go to **Claim Ingestion** first.")
+        return
+
+    # Check which documents have been fully processed
+    ready    = []
+    not_done = []
+    for ocr_key in ocr_keys:
+        fname = ocr_key.replace("ocr_", "")
+        has_ext = f"ext_{fname}" in st.session_state
+        has_val = f"val_{fname}" in st.session_state
+        has_fraud = f"fraud_{fname}" in st.session_state
+        if has_ext:
+            ready.append(fname)
+        else:
+            not_done.append(fname)
+
+    if not_done:
+        st.info(
+            f"⚠️ {len(not_done)} document(s) haven't been processed yet: "
+            + ", ".join(f"**{f}**" for f in not_done)
+            + ". Visit **Processing & Extraction** (and optionally Validation & "
+            "Fraud Scoring) to enrich the report."
+        )
+
+    if not ready:
+        st.warning("No documents have been processed. Run **Processing & Extraction** first.")
+        return
+
+    section_header(f"{len(ready)} Document Report(s) Ready")
+
+    for filename in ready:
+        meta      = st.session_state.get(f"meta_{filename}", {})
+        doc_type  = st.session_state.get(f"cls_{filename}", "Unknown")
+        extracted = st.session_state.get(f"ext_{filename}", {})
+        val_results = st.session_state.get(f"val_{filename}", [])
+        fraud     = st.session_state.get(f"fraud_{filename}", {})
+
+        claim_ref = meta.get("claim_ref", "N/A")
+
+        # Run validation automatically if not done yet
+        if not val_results and extracted:
+            val_results = validate_claim(extracted)
+            st.session_state[f"val_{filename}"] = val_results
+
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        hdr, dl_col = st.columns([4, 1])
+        with hdr:
+            st.markdown(f"### 📄 {filename}  —  `{claim_ref}`")
+            status_parts = []
+            status_parts.append(f"✅ Extraction")
+            if val_results:
+                fails = sum(1 for r in val_results if r["status"] == "Fail")
+                status_parts.append(f"{'❌' if fails else '✅'} Validation ({len(val_results)} rules)")
+            else:
+                status_parts.append("⬜ Validation (not run)")
+            if fraud:
+                status_parts.append(f"🔍 Fraud score: **{fraud.get('fraud_score', 'N/A')}** — {fraud.get('risk_level', 'N/A')}")
+            else:
+                status_parts.append("⬜ Fraud scoring (not run)")
+            st.markdown("  &nbsp;·&nbsp;  ".join(status_parts), unsafe_allow_html=True)
+
+        with dl_col:
+            # Generate report HTML and offer download
+            report_html = _report_html(
+                filename, meta, doc_type, extracted, val_results, fraud
+            )
+            safe_name = claim_ref.replace("/", "-") if claim_ref != "N/A" else filename
+            st.download_button(
+                label="⬇ Download Report",
+                data=report_html.encode("utf-8"),
+                file_name=f"claim_report_{safe_name}.html",
+                mime="text/html",
+                key=f"dl_{filename}",
+                use_container_width=True,
+            )
+
+        # ── Inline preview ────────────────────────────────────────────────────
+        with st.expander("👁 Preview report inline"):
+            st.components.v1.html(report_html, height=800, scrolling=True)
+
+        # ── Quick summary cards ───────────────────────────────────────────────
+        st.markdown("<br>", unsafe_allow_html=True)
+        sc1, sc2, sc3 = st.columns(3)
+        with sc1:
+            section_header("Extracted Fields")
+            filled = sum(1 for v in extracted.values() if v not in (None, "", []))
+            total  = len(extracted)
+            st.markdown(
+                metric_card("Fields Extracted", f"{filled} / {total}",
+                            f"{filled/total*100:.0f}% complete" if total else "—", filled == total),
+                unsafe_allow_html=True,
+            )
+        with sc2:
+            section_header("Validation")
+            if val_results:
+                passes   = sum(1 for r in val_results if r["status"] == "Pass")
+                fails    = sum(1 for r in val_results if r["status"] == "Fail")
+                warnings = sum(1 for r in val_results if r["status"] == "Warning")
+                verdict  = "Pass" if fails == 0 else "Fail"
+                st.markdown(
+                    metric_card("Rules Run", str(len(val_results)),
+                                f"{passes}✓ {fails}✗ {warnings}⚠", fails == 0),
+                    unsafe_allow_html=True,
+                )
+                st.markdown(f"Overall: {badge_html(verdict)}", unsafe_allow_html=True)
+            else:
+                st.caption("Validation not yet run.")
+        with sc3:
+            section_header("Fraud Score")
+            if fraud and "fraud_score" in fraud:
+                score = fraud["fraud_score"]
+                risk  = fraud.get("risk_level", "Unknown")
+                low   = score < 30
+                st.markdown(
+                    metric_card("Fraud Score", f"{score} / 100",
+                                risk, low),
+                    unsafe_allow_html=True,
+                )
+                st.markdown(fraud_bar_html(score), unsafe_allow_html=True)
+            else:
+                st.caption("Fraud scoring not yet run.")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Bulk download: all reports in one zip ─────────────────────────────────
+    if len(ready) > 1:
+        st.markdown("---")
+        section_header("Bulk Export")
+        import zipfile, io
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for filename in ready:
+                meta      = st.session_state.get(f"meta_{filename}", {})
+                doc_type  = st.session_state.get(f"cls_{filename}", "Unknown")
+                extracted = st.session_state.get(f"ext_{filename}", {})
+                val_results = st.session_state.get(f"val_{filename}", [])
+                fraud     = st.session_state.get(f"fraud_{filename}", {})
+                html_content = _report_html(filename, meta, doc_type, extracted, val_results, fraud)
+                safe = meta.get("claim_ref", filename).replace("/", "-")
+                zf.writestr(f"claim_report_{safe}.html", html_content)
+        zip_buf.seek(0)
+        st.download_button(
+            label=f"⬇ Download All {len(ready)} Reports (.zip)",
+            data=zip_buf.read(),
+            file_name="marvelai_claim_reports.zip",
+            mime="application/zip",
+            type="primary",
+        )
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SIDEBAR NAVIGATION
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2035,6 +2517,7 @@ def render_sidebar() -> str:
             "Processing & Extraction"    : "processing",
             "Validation"                 : "validation",
             "AI Fraud Scoring"           : "fraud",
+            "Claim Report"               : "report",
         }
 
         selected_label = st.radio(
@@ -2098,6 +2581,8 @@ def main() -> None:
         page_validation()
     elif active_page == "fraud":
         page_fraud_scoring()
+    elif active_page == "report":
+        page_report()
 
 
 if __name__ == "__main__":
