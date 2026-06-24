@@ -1493,12 +1493,23 @@ def page_dashboard(df: pd.DataFrame) -> None:
             hole=0.58,
         )
         fig.update_traces(
-            textposition="outside",
-            textinfo="label+percent",
-            textfont=dict(size=11, color="#344054"),
-            outsidetextfont=dict(size=11, color="#344054"),
+            textposition="inside",
+            textinfo="percent",
+            textfont=dict(size=11, color="#FFFFFF", family="Inter, Segoe UI, sans-serif"),
+            insidetextorientation="radial",
         )
-        fig.update_layout(showlegend=False, **chart_layout)
+        fig.update_layout(
+            showlegend=True,
+            legend=dict(
+                orientation="v",
+                x=1.01,
+                y=0.5,
+                font=dict(color="#344054", size=11),
+                bgcolor="rgba(0,0,0,0)",
+            ),
+            margin=dict(t=44, b=16, l=16, r=120),
+            **{k: v for k, v in chart_layout.items() if k != "margin"},
+        )
         st.plotly_chart(fig, use_container_width=True)
 
     with ch2:
@@ -1588,20 +1599,61 @@ def page_dashboard(df: pd.DataFrame) -> None:
     display_df["submitted_at"] = display_df["submitted_at"].dt.strftime("%d %b %Y")
     display_df["claim_amount"] = display_df["claim_amount"].apply(lambda x: f"₹{x:,.0f}")
     display_df["fraud_score"]  = display_df["fraud_score"].apply(lambda x: f"{x:.1f}")
-    st.dataframe(
-        display_df.rename(columns={
-            "claim_id"      : "Claim ID",
-            "submitted_at"  : "Submitted",
-            "coverage_type" : "Coverage",
-            "geography"     : "Geography",
-            "status"        : "Status",
-            "claim_amount"  : "Amount",
-            "fraud_score"   : "Fraud Score",
-            "processing_days": "Days",
-        }),
-        use_container_width=True,
-        hide_index=True,
+
+    status_badge_map = {
+        "Approved"     : ("#E9F6EE", "#1F7A4D"),
+        "Pending"      : ("#FFF8E8", "#A86512"),
+        "Rejected"     : ("#FCEDEA", "#B2382F"),
+        "Under Review" : ("#EAF1FB", "#2E5EAA"),
+        "Fraud Flagged": ("#F3EEF9", "#7A4F8F"),
+    }
+
+    col_labels = ["Claim ID", "Submitted", "Coverage", "Geography",
+                  "Status", "Amount", "Fraud Score", "Days"]
+    col_keys   = ["claim_id", "submitted_at", "coverage_type", "geography",
+                  "status", "claim_amount", "fraud_score", "processing_days"]
+
+    header_cells = "".join(
+        f"""<th style="background:#F0EAE0;color:#172033;font-size:0.7rem;font-weight:700;
+            text-transform:uppercase;letter-spacing:0.08em;padding:0.55rem 0.85rem;
+            border-bottom:2px solid #D6CEC0;white-space:nowrap;">{lbl}</th>"""
+        for lbl in col_labels
     )
+
+    rows_html = ""
+    for _, row in display_df.iterrows():
+        cells = ""
+        for key in col_keys:
+            val = row[key]
+            if key == "status":
+                bg, fg = status_badge_map.get(str(val), ("#F0EAE0", "#344054"))
+                cell_html = (
+                    f"""<span style="display:inline-block;padding:0.15rem 0.55rem;"
+                    f"border-radius:999px;background:{bg};color:{fg};"
+                    f"font-size:0.68rem;font-weight:700;">{val}</span>"""
+                )
+                cells += f"""<td style="padding:0.55rem 0.85rem;">{cell_html}</td>"""
+            elif key == "fraud_score":
+                score_f = float(val)
+                color = "#B2382F" if score_f >= 60 else ("#A86512" if score_f >= 30 else "#1F7A4D")
+                cells += (
+                    f"""<td style="padding:0.55rem 0.85rem;color:{color};"
+                    f"font-weight:600;font-size:0.83rem;">{val}</td>"""
+                )
+            else:
+                cells += f"""<td style="padding:0.55rem 0.85rem;color:#344054;font-size:0.83rem;">{val}</td>"""
+        rows_html += f"<tr style='border-bottom:1px solid #EEE9E0;'>{cells}</tr>"
+
+    table_html = f"""
+    <div style="overflow-x:auto;border-radius:8px;border:1px solid #D6CEC0;
+                box-shadow:0 8px 24px rgba(23,32,51,0.045);">
+      <table style="width:100%;border-collapse:collapse;background:#FFFFFF;
+                    font-family:Inter,Segoe UI,sans-serif;">
+        <thead><tr>{header_cells}</tr></thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+    </div>"""
+    st.markdown(table_html, unsafe_allow_html=True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1743,9 +1795,17 @@ def page_processing() -> None:
                     st.session_state[ext_key] = extracted
             if ext_key in st.session_state:
                 extracted = st.session_state[ext_key]
-                st.markdown('<div class="json-box">', unsafe_allow_html=True)
-                st.json(extracted)
-                st.markdown("</div>", unsafe_allow_html=True)
+                import json as _json
+                json_str = _json.dumps(extracted, indent=2, ensure_ascii=False)
+                # Render as styled HTML so the light theme applies correctly
+                escaped = json_str.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                st.markdown(
+                    f"""<pre style="background:#F4F0E8;border:1px solid #D6CEC0;border-radius:8px;
+                    padding:1rem 1.1rem;font-family:'JetBrains Mono','Fira Code',Consolas,monospace;
+                    font-size:0.78rem;color:#344054;line-height:1.75;overflow-x:auto;
+                    white-space:pre-wrap;word-break:break-word;">{escaped}</pre>""",
+                    unsafe_allow_html=True,
+                )
             else:
                 st.caption("Click **Extract Data** to pull structured fields.")
 
