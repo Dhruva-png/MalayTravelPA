@@ -10,7 +10,8 @@ pandas>=2.2.0
 requests>=2.31.0
 Pillow>=10.2.0
 PyMuPDF>=1.23.0
-ollama>=0.1.8
+# Optional – only needed for image/scanned-PDF OCR:
+# pytesseract>=0.3.10
 
 Usage:
 ------
@@ -18,7 +19,7 @@ Usage:
 2. Ensure Ollama is running locally with llama3.2 pulled:
        ollama pull llama3.2
        ollama serve
-3. Run the app:  streamlit run marvelai_claims_portal.py
+3. Run the app:  streamlit run app.py
 """
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -583,6 +584,19 @@ def inject_css() -> None:
         color: rgba(255,255,255,0.78) !important;
         padding: 0.72rem 0.78rem !important;
         font-weight: 600;
+        display: flex !important;
+        align-items: center !important;
+        gap: 0.65rem !important;
+        min-height: 2.55rem;
+    }
+    [data-testid="stSidebar"] .stRadio > div > label > div:first-child {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin-top: 0 !important;
+    }
+    [data-testid="stSidebar"] .stRadio input {
+        margin-top: 0 !important;
     }
     [data-testid="stSidebar"] .stRadio > div > label:hover {
         background: rgba(255,255,255,0.08) !important;
@@ -737,11 +751,31 @@ def inject_css() -> None:
     }
     [data-testid="stPlotlyChart"] {
         padding: 0.75rem;
+        overflow: hidden;
+    }
+    [data-testid="stPlotlyChart"] > div {
+        overflow: hidden;
     }
     [data-testid="stDataFrame"] thead th,
     .dataframe thead th {
         background: #F0EAE0 !important;
         color: var(--ink) !important;
+    }
+    [data-testid="stDataFrame"],
+    [data-testid="stDataFrame"] div,
+    [data-testid="stDataFrame"] canvas,
+    [data-testid="stDataFrame"] iframe {
+        background-color: #FFFFFF !important;
+        color: var(--ink-soft) !important;
+    }
+    [data-testid="stDataFrame"] tbody tr,
+    [data-testid="stDataFrame"] tbody td {
+        background-color: #FFFFFF !important;
+        color: var(--ink-soft) !important;
+    }
+    [data-testid="stDataFrame"] tbody tr:nth-child(even),
+    [data-testid="stDataFrame"] [role="row"]:nth-child(even) {
+        background-color: #FBFAF7 !important;
     }
     [data-testid="stAlert"] {
         border-radius: 8px !important;
@@ -852,6 +886,80 @@ Bank Account: Axis Bank, A/C 9170200012345678, IFSC UTIB0001234
 # ──────────────────────────────────────────────────────────────────────────────
 # OLLAMA LLM INTEGRATION
 # ──────────────────────────────────────────────────────────────────────────────
+def _ocr_image_bytes(image_bytes: bytes) -> Tuple[str, str]:
+    """Extract text from an image when local OCR support is installed."""
+    try:
+        from PIL import Image
+        import pytesseract
+    except ImportError:
+        return "", "Image OCR requires `pytesseract` and `Pillow`."
+
+    try:
+        image = Image.open(BytesIO(image_bytes))
+        text = pytesseract.image_to_string(image).strip()
+        return text, ""
+    except Exception as exc:
+        return "", f"Image OCR failed: {exc}"
+
+
+def extract_pdf_text(file_bytes: bytes) -> Tuple[str, str, str]:
+    """Extract selectable PDF text and OCR rendered pages when needed."""
+    try:
+        import fitz
+    except ImportError:
+        return "", "PDF text extraction requires `PyMuPDF`.", "PDF extraction unavailable"
+
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+    except Exception as exc:
+        return "", f"Could not open PDF: {exc}", "PDF open failed"
+
+    page_text: List[str] = []
+    ocr_warnings: List[str] = []
+    for page_index, page in enumerate(doc, start=1):
+        text = page.get_text("text").strip()
+        if text:
+            page_text.append(f"--- Page {page_index} ---\n{text}")
+            continue
+
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+        ocr_text, warning = _ocr_image_bytes(pix.tobytes("png"))
+        if ocr_text:
+            page_text.append(f"--- Page {page_index} OCR ---\n{ocr_text}")
+        elif warning:
+            ocr_warnings.append(f"Page {page_index}: {warning}")
+
+    doc.close()
+    extracted = "\n\n".join(page_text).strip()
+    warning = " ".join(ocr_warnings)
+    method = "PDF text extraction + OCR" if "OCR ---" in extracted else "PDF text extraction"
+    return extracted, warning, method
+
+
+def extract_uploaded_document_text(uploaded_file) -> Tuple[str, str, str]:
+    """Extract claim text from uploaded PDFs, images, and text-like files."""
+    file_bytes = uploaded_file.getvalue()
+    file_type = (uploaded_file.type or "").lower()
+    name = uploaded_file.name.lower()
+
+    if file_type == "application/pdf" or name.endswith(".pdf"):
+        return extract_pdf_text(file_bytes)
+
+    if file_type.startswith("image/") or name.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff")):
+        text, warning = _ocr_image_bytes(file_bytes)
+        return text, warning, "Image OCR"
+
+    if name.endswith((".txt", ".csv", ".tsv")) or file_type.startswith("text/"):
+        for encoding in ("utf-8", "utf-16", "latin-1"):
+            try:
+                return file_bytes.decode(encoding).strip(), "", f"Text decode ({encoding})"
+            except UnicodeDecodeError:
+                continue
+        return "", "Could not decode this text file.", "Text extraction failed"
+
+    return "", "Unsupported document type. Upload a PDF, image, or text file.", "Unsupported"
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def get_ollama_status() -> Dict[str, Any]:
     """Check local Ollama and pick the best available model."""
@@ -1221,15 +1329,28 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
 # ──────────────────────────────────────────────────────────────────────────────
 def badge_html(status: str) -> str:
     mapping = {
+        # Validation rule results
         "Pass"    : "badge-success",
         "Fail"    : "badge-danger",
         "Warning" : "badge-warning",
-        "High"    : "badge-danger",
-        "Medium"  : "badge-warning",
+        # Fraud risk levels
         "Low"     : "badge-success",
+        "Medium"  : "badge-warning",
+        "High"    : "badge-danger",
         "Critical": "badge-danger",
     }
-    cls = mapping.get(status, "badge-neutral")
+    # Known document types get the info (blue) style; everything else neutral
+    doc_types = {
+        "Death Certificate", "Hospital Bill", "Medical Report",
+        "Disability Assessment", "Police Report", "Boarding Pass",
+        "Insurance Policy", "Claim Form", "Discharge Summary",
+    }
+    if status in doc_types:
+        cls = "badge-info"
+    elif status == "Unknown" or status.startswith("Unknown"):
+        cls = "badge-neutral"
+    else:
+        cls = mapping.get(status, "badge-neutral")
     return f'<span class="badge {cls}">{status}</span>'
 
 
@@ -1318,18 +1439,22 @@ def page_dashboard(df: pd.DataFrame) -> None:
     total_value   = fdf["claim_amount"].sum()
     approved      = len(fdf[fdf["status"] == "Approved"])
     fraud_flagged = len(fdf[fdf["status"] == "Fraud Flagged"])
-    avg_days      = fdf["processing_days"].mean()
+    avg_days      = fdf["processing_days"].mean() if total_claims else 0.0
+
+    if total_claims == 0:
+        st.warning("No claims match the selected filters. Please broaden your criteria.")
+        return
 
     with m1:
         st.markdown(metric_card("Total Claims", f"{total_claims:,}"), unsafe_allow_html=True)
     with m2:
         st.markdown(metric_card("Total Value", f"₹{total_value/1e6:.2f}M"), unsafe_allow_html=True)
     with m3:
-        pct = f"{approved/total_claims*100:.1f}% ↑" if total_claims else "—"
+        pct = f"{approved / total_claims * 100:.1f}% ↑"
         st.markdown(metric_card("Approved", f"{approved:,}", pct, True), unsafe_allow_html=True)
     with m4:
-        st.markdown(metric_card("Fraud Flagged", f"{fraud_flagged:,}",
-                                f"{fraud_flagged/total_claims*100:.1f}%", False),
+        fraud_pct = f"{fraud_flagged / total_claims * 100:.1f}%"
+        st.markdown(metric_card("Fraud Flagged", f"{fraud_flagged:,}", fraud_pct, False),
                     unsafe_allow_html=True)
     with m5:
         st.markdown(metric_card("Avg Processing", f"{avg_days:.1f}d"), unsafe_allow_html=True)
@@ -1338,27 +1463,28 @@ def page_dashboard(df: pd.DataFrame) -> None:
 
     # ── Charts Row 1 ──────────────────────────────────────────────────────────
     section_header("Claims Distribution")
+
+    # Shared chart constants — defined before column blocks so all charts can use them
+    color_map = {
+        "Approved"     : "#1F7A4D",
+        "Pending"      : "#C98A2E",
+        "Rejected"     : "#B2382F",
+        "Under Review" : "#2E5EAA",
+        "Fraud Flagged": "#7A4F8F",
+    }
+    chart_layout = dict(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor ="rgba(0,0,0,0)",
+        font=dict(family="Inter, Segoe UI, sans-serif", color="#344054", size=12),
+        title_font=dict(size=14, color="#172033", family="Inter, Segoe UI, sans-serif"),
+        margin=dict(t=44, b=16, l=16, r=16),
+    )
+
     ch1, ch2 = st.columns(2)
 
     with ch1:
         status_counts = fdf["status"].value_counts().reset_index()
         status_counts.columns = ["Status", "Count"]
-        # Consistent status colour palette — readable on white
-        color_map = {
-            "Approved"     : "#1F7A4D",
-            "Pending"      : "#C98A2E",
-            "Rejected"     : "#B2382F",
-            "Under Review" : "#2E5EAA",
-            "Fraud Flagged": "#7A4F8F",
-        }
-        # Shared layout defaults for all charts
-        chart_layout = dict(
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor ="rgba(0,0,0,0)",
-            font=dict(family="Inter, Segoe UI, sans-serif", color="#344054", size=12),
-            title_font=dict(size=14, color="#172033", family="Inter, Segoe UI, sans-serif"),
-            margin=dict(t=44, b=16, l=16, r=16),
-        )
 
         fig = px.pie(
             status_counts, names="Status", values="Count",
@@ -1484,13 +1610,13 @@ def page_dashboard(df: pd.DataFrame) -> None:
 def page_ingestion() -> None:
     page_hero(
         "Claim Document Ingestion",
-        "Upload claim files, assign demo OCR content, and create a clean claim workspace for downstream review.",
+        "Upload claim files and extract real document text for downstream LLM classification, validation, and fraud review.",
         "Intake desk",
     )
 
     uploaded_files = st.file_uploader(
         "Drop claim documents here",
-        type=["pdf", "png", "jpg", "jpeg", "tiff"],
+        type=["pdf", "png", "jpg", "jpeg", "tif", "tiff", "txt", "csv", "tsv"],
         accept_multiple_files=True,
         help="Accepted formats: PDF, PNG, JPG, TIFF — max 10 MB per file",
     )
