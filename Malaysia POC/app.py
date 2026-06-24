@@ -26,6 +26,7 @@ Usage:
 # IMPORTS
 # ──────────────────────────────────────────────────────────────────────────────
 import json
+import hashlib
 import random
 import re
 import time
@@ -1120,6 +1121,27 @@ DOCUMENT TEXT:
 JSON:"""
 
 
+VALIDATION_REVIEW_PROMPT = """You are an insurance claims reviewer.
+Review the extracted data and deterministic validation results below. Identify any
+material inconsistency, missing evidence, or action needed before a claim can proceed.
+Do not invent facts that are not present in the supplied data.
+
+Return ONLY valid JSON in this exact format:
+{{
+  "recommendation": "<Proceed|Manual Review|Request Information>",
+  "rationale": "<brief evidence-based explanation>",
+  "follow_up_items": ["<specific item>"]
+}}
+
+EXTRACTED DATA:
+{extracted_json}
+
+VALIDATION RESULTS:
+{validation_json}
+
+JSON:"""
+
+
 def classify_document(text: str) -> str:
     """Use LLM to classify the document type."""
     prompt   = CLASSIFY_PROMPT.format(text=text[:3000])  # token budget
@@ -1167,33 +1189,27 @@ def score_fraud(text: str) -> Dict[str, Any]:
 # RULE-BASED VALIDATION ENGINE
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Simulated policy database
-MOCK_POLICIES: Dict[str, Dict] = {
-    "TRV-2024-INS-88742": {
-        "holder"         : "Rajesh Kumar Sharma",
-        "coverage_start" : date(2024, 3, 1),
-        "coverage_end"   : date(2024, 4, 30),
-        "coverage_types" : ["Hospitalisation", "Accidental Death", "Permanent Disability"],
-        "sum_assured"    : 500000,
-    },
-    "TRV-2024-GBL-44211": {
-        "holder"         : "Anita Raghunathan",
-        "coverage_start" : date(2024, 10, 25),
-        "coverage_end"   : date(2024, 11, 15),
-        "coverage_types" : ["Accidental Death", "Emergency Evacuation"],
-        "sum_assured"    : 1000000,
-    },
-    "TRV-2024-SEA-30019": {
-        "holder"         : "Santhosh Pillai",
-        "coverage_start" : date(2024, 1, 20),
-        "coverage_end"   : date(2024, 2, 5),
-        "coverage_types" : ["Permanent Disability", "Hospitalisation"],
-        "sum_assured"    : 300000,
-    },
-}
-
-# Simulated duplicate detection store (would be a DB in production)
-SUBMITTED_CLAIMS: List[str] = ["TRV-2024-INS-77001", "TRV-2024-GBL-11980"]
+def review_validation_with_llm(
+    extracted: Dict[str, Any], rule_results: List[Dict[str, str]]
+) -> Dict[str, Any]:
+    """Ask the local model for an evidence-based review of validation findings."""
+    prompt = VALIDATION_REVIEW_PROMPT.format(
+        extracted_json=json.dumps(extracted, ensure_ascii=False, default=str),
+        validation_json=json.dumps(rule_results, ensure_ascii=False, default=str),
+    )
+    response = ollama_generate(prompt)
+    if not response:
+        return {}
+    clean = response.strip()
+    fence = chr(96) * 3
+    if clean.startswith(fence):
+        clean = clean.split("\n", 1)[-1]
+        if clean.endswith(fence):
+            clean = clean[:-3]
+    try:
+        return json.loads(clean.strip())
+    except json.JSONDecodeError:
+        return {"raw_response": response}
 
 
 def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -1212,13 +1228,16 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
     disability = extracted.get("disability_percent")
 
     # ── Rule 1: Policy exists ─────────────────────────────────────────────────
-    policy = MOCK_POLICIES.get(policy_no) if policy_no else None
+    # A PDF can supply a policy number, but a real policy lookup requires a
+    # connected policy administration system rather than in-code sample records.
+    policy = None
     if not policy_no:
         results.append({"rule": "Policy Number Present", "status": "Fail",
                          "message": "Policy number not found in document."})
     elif not policy:
-        results.append({"rule": "Policy Exists", "status": "Fail",
-                         "message": f"Policy '{policy_no}' not found in system."})
+        results.append({"rule": "Policy Exists", "status": "Warning",
+                         "message": f"Policy '{policy_no}' extracted from document; "
+                                    "external policy lookup is not connected."})
     else:
         results.append({"rule": "Policy Exists", "status": "Pass",
                          "message": f"Policy {policy_no} verified."})
@@ -1281,12 +1300,11 @@ def validate_claim(extracted: Dict[str, Any]) -> List[Dict[str, str]]:
             })
 
     # ── Rule 6: Duplicate claim detection ─────────────────────────────────────
-    if policy_no in SUBMITTED_CLAIMS:
-        results.append({"rule": "Duplicate Claim Check", "status": "Fail",
-                         "message": f"A claim for policy {policy_no} was already submitted."})
-    else:
-        results.append({"rule": "Duplicate Claim Check", "status": "Pass",
-                         "message": "No duplicate claim found for this policy."})
+    results.append({
+        "rule": "Duplicate Claim Check",
+        "status": "Warning",
+        "message": "Duplicate detection requires a connected claims database.",
+    })
 
     # ── Rule 7: Treatment cost within sum assured ─────────────────────────────
     if policy and cost:
@@ -1680,18 +1698,6 @@ def page_ingestion() -> None:
 
     section_header(f"{len(uploaded_files)} Document(s) Uploaded")
 
-    # Document-type selector (mock OCR source)
-    mock_type_map = {
-        "Hospital Bill"       : "hospital_bill",
-        "Death Certificate"   : "death_certificate",
-        "Disability Report"   : "disability_report",
-    }
-    selected_mock = st.selectbox(
-        "🔬 For this demo, choose the mock OCR content to use:",
-        list(mock_type_map.keys()),
-        help="In production, a real OCR engine extracts text from the uploaded file.",
-    )
-
     for file in uploaded_files:
         with st.container():
             st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -1712,21 +1718,23 @@ def page_ingestion() -> None:
             ocr_key  = f"ocr_{file.name}"
             meta_key = f"meta_{file.name}"
 
-            # Only extract once per file (re-upload clears the key)
-            if ocr_key not in st.session_state:
+            file_hash = hashlib.sha256(file.getvalue()).hexdigest()
+            # Re-extract if the file contents change, even when the file name is reused.
+            if (
+                ocr_key not in st.session_state
+                or st.session_state.get(meta_key, {}).get("file_hash") != file_hash
+            ):
                 with st.spinner(f"Extracting text from {file.name}…"):
                     extracted_text, warning, method = extract_uploaded_document_text(file)
 
-                # If real extraction yielded nothing, fall back to the demo mock
                 if not extracted_text.strip():
-                    extracted_text = mock_ocr_text(mock_type_map[selected_mock])
-                    method = f"Demo mock ({selected_mock}) — real extraction returned empty"
+                    extracted_text = ""
+                    method = "Text extraction failed"
                     if warning:
                         st.warning(f"⚠️ Extraction note: {warning}")
-                    st.info(
-                        "ℹ️ No text could be extracted from the uploaded file "
-                        f"(it may be scanned without OCR). Loaded **demo content** "
-                        f"for '{selected_mock}' so you can still explore the pipeline."
+                    st.error(
+                        "No readable text was found in this document. "
+                        "For scanned PDFs, install and configure Tesseract OCR."
                     )
                 else:
                     if warning:
@@ -1740,7 +1748,11 @@ def page_ingestion() -> None:
                     "upload_ts"  : datetime.now().isoformat(),
                     "claim_ref"  : f"CLM-{uuid.uuid4().hex[:8].upper()}",
                     "ocr_method" : method,
+                    "file_hash"  : file_hash,
+                    "extraction_warning": warning,
                 }
+                for prefix in ("cls_", "ext_", "val_", "fraud_", "ai_val_"):
+                    st.session_state.pop(f"{prefix}{file.name}", None)
 
             meta = st.session_state[meta_key]
             st.markdown(
@@ -1796,6 +1808,8 @@ def page_processing() -> None:
         for ocr_key in ocr_keys:
             filename = ocr_key.replace("ocr_", "")
             text = st.session_state[ocr_key]
+            if not text.strip():
+                continue
             with st.spinner(f"Classifying {filename}…"):
                 st.session_state[f"cls_{filename}"] = classify_document(text)
             with st.spinner(f"Extracting fields from {filename}…"):
@@ -1812,6 +1826,13 @@ def page_processing() -> None:
         text     = st.session_state[ocr_key]
         cls_key  = f"cls_{filename}"
         ext_key  = f"ext_{filename}"
+
+        if not text.strip():
+            st.error(
+                f"{filename}: no text could be extracted. Upload a text-based PDF "
+                "or configure OCR for scanned documents."
+            )
+            continue
 
         already_done = cls_key in st.session_state and ext_key in st.session_state
 
@@ -1933,13 +1954,30 @@ def page_validation() -> None:
         st.markdown(f"### 📄 {filename}  —  `{meta.get('claim_ref', '')}`")
 
         val_key = f"val_{filename}"
+        ai_key = f"ai_val_{filename}"
         run_btn = st.button("▶ Run Validation Rules", key=f"btn_val_{filename}")
         if run_btn:
             results = validate_claim(extracted)
             st.session_state[val_key] = results
+            with st.spinner(f"Reviewing validation with {active_model_label()}…"):
+                st.session_state[ai_key] = review_validation_with_llm(extracted, results)
 
         if val_key in st.session_state:
             results = st.session_state[val_key]
+
+            llm_review = st.session_state.get(ai_key, {})
+            if llm_review:
+                section_header(f"Local LLM Review ({active_model_label()})")
+                if "raw_response" in llm_review:
+                    st.code(llm_review["raw_response"], language="text")
+                else:
+                    recommendation = llm_review.get("recommendation", "Manual Review")
+                    st.markdown(f"**Recommendation:** {recommendation}")
+                    if llm_review.get("rationale"):
+                        st.caption(llm_review["rationale"])
+                    for item in llm_review.get("follow_up_items", []):
+                        st.markdown(f"- {item}")
+                st.divider()
 
             # Summary counts
             passes   = sum(1 for r in results if r["status"] == "Pass")
