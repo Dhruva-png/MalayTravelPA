@@ -78,6 +78,47 @@ DOC_TYPES = [
     "Insurance Policy", "Claim Form", "Discharge Summary", "Unknown",
 ]
 
+from dataclasses import dataclass, field, asdict
+
+@dataclass
+class FraudSignal:
+    name: str
+    description: str
+    risk_score: float
+
+@dataclass
+class FraudAssessment:
+    overall_score: float = 0.0
+    signals: List[FraudSignal] = field(default_factory=list)
+    reasoning: str = ""
+
+@dataclass
+class ClaimDocument:
+    file_name: str
+    file_type: str
+    content_bytes: bytes = field(repr=False)
+    extracted_text: str = ""
+    ocr_method: str = ""
+    parsed_entities: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class ClaimContext:
+    claim_id: str
+    policy_number: str
+    submitted_at: datetime
+    coverage_type: str
+    geography: str
+    claim_amount: float
+    documents: List[ClaimDocument] = field(default_factory=list)
+    travel_mismatch: bool = False
+    is_duplicate: bool = False
+    medical_assessment_passed: bool = False
+    medical_reasoning: str = ""
+    travel_reasoning: str = ""
+    fraud_assessment: FraudAssessment = field(default_factory=FraudAssessment)
+    final_status: str = "PENDING"
+    decision_reasoning: str = ""
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CUSTOM CSS  – professional light theme
 # ──────────────────────────────────────────────────────────────────────────────
@@ -802,39 +843,31 @@ def inject_css() -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 # MOCK DATA GENERATORS
 # ──────────────────────────────────────────────────────────────────────────────
+# --- REPLACE YOUR EXISTING generate_mock_claims FUNCTION ---
 def generate_mock_claims(n: int = 120) -> pd.DataFrame:
-    """Generate synthetic claims data for dashboard analytics."""
     random.seed(42)
-    statuses  = ["Approved", "Pending", "Rejected", "Under Review", "Fraud Flagged"]
-    weights   = [0.40, 0.25, 0.15, 0.12, 0.08]
+    weights = [0.25, 0.30, 0.20, 0.10, 0.15] # AUTO APPROVE, MANUAL REVIEW, REQUEST INFORMATION, FRAUD INVESTIGATION, REJECT
     base_date = datetime(2024, 1, 1)
-
     records = []
     for i in range(n):
-        cov  = random.choice(COVERAGE_TYPES)
-        geo  = random.choice(GEOGRAPHIES)
-        stat = random.choices(statuses, weights=weights)[0]
-        fraud_score = (
-            random.uniform(65, 98) if stat == "Fraud Flagged"
-            else random.uniform(0, 40)
-        )
-        amount_map = {
-            "Accidental Death"    : (50000, 500000),
-            "Permanent Disability": (20000, 300000),
-            "Hospitalisation"     : (2000,  80000),
-            "Emergency Evacuation": (5000,  150000),
-            "Trip Cancellation"   : (500,   15000),
-            "Baggage Loss"        : (200,   5000),
-        }
-        lo, hi = amount_map[cov]
+        cov = random.choice(["Accidental Death", "Hospitalisation", "Trip Cancellation", "Baggage Loss"])
+        geo = random.choice(["Southeast Asia", "Europe", "North America", "Middle East"])
+        stat = random.choices(["AUTO APPROVE", "MANUAL REVIEW", "REQUEST INFORMATION", "FRAUD INVESTIGATION", "REJECT"], weights=weights)[0]
+        fraud_score = random.uniform(80, 100) if stat == "FRAUD INVESTIGATION" else random.uniform(0, 45)
+        
+        is_travel_mismatch = random.random() < 0.08
+        is_duplicate = random.random() < 0.05
+
         records.append({
-            "claim_id"     : f"CLM-{10000 + i}",
-            "submitted_at" : base_date + timedelta(days=random.randint(0, 365)),
+            "claim_id": f"CLM-{10000 + i}",
+            "submitted_at": base_date + timedelta(days=random.randint(0, 365)),
             "coverage_type": cov,
-            "geography"    : geo,
-            "status"       : stat,
-            "claim_amount" : round(random.uniform(lo, hi), 2),
-            "fraud_score"  : round(fraud_score, 1),
+            "geography": geo,
+            "status": stat,
+            "claim_amount": round(random.uniform(500, 50000), 2),
+            "fraud_score": round(fraud_score, 1),
+            "travel_mismatch": is_travel_mismatch,
+            "is_duplicate": is_duplicate,
             "processing_days": random.randint(1, 45),
         })
     return pd.DataFrame(records)
@@ -1419,12 +1452,35 @@ def page_hero(title: str, subtitle: str, kicker: str = "MarvelAI Travel PA") -> 
 # ──────────────────────────────────────────────────────────────────────────────
 # PAGE: DASHBOARD (ANALYTICS)
 # ──────────────────────────────────────────────────────────────────────────────
-def page_dashboard(df: pd.DataFrame) -> None:
-    page_hero(
-        "Claims Analytics Dashboard",
-        "Real-time operational view of submitted travel PA claims, exposure, risk, and processing velocity.",
-        "Portfolio overview",
-    )
+# --- REPLACE YOUR EXISTING page_dashboard FUNCTION ---
+def page_dashboard(df: pd.DataFrame):
+    st.markdown('<div class="page-hero"><h1>Dashboard Analytics</h1><p>Platform overview and core operational metrics.</p></div>', unsafe_allow_html=True)
+    
+    # Calculate new required metrics
+    total = len(df)
+    avg_fraud = df["fraud_score"].mean()
+    auto_approved = len(df[df["status"] == "AUTO APPROVE"])
+    rejected = len(df[df["status"] == "REJECT"])
+    investigation = len(df[df["status"] == "FRAUD INVESTIGATION"])
+    travel_mismatches = df["travel_mismatch"].sum()
+    duplicates = df["is_duplicate"].sum()
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: st.markdown(f'<div class="card-metric"><div class="metric-value">{total}</div><div class="metric-label">Claims Processed</div></div>', unsafe_allow_html=True)
+    with col2: st.markdown(f'<div class="card-metric"><div class="metric-value">{avg_fraud:.1f}</div><div class="metric-label">Avg Fraud Score</div></div>', unsafe_allow_html=True)
+    with col3: st.markdown(f'<div class="card-metric"><div class="metric-value">{auto_approved}</div><div class="metric-label">Claims Auto Approved</div></div>', unsafe_allow_html=True)
+    with col4: st.markdown(f'<div class="card-metric"><div class="metric-value">{rejected}</div><div class="metric-label">Claims Rejected</div></div>', unsafe_allow_html=True)
+
+    st.write("")
+    col5, col6, col7 = st.columns(3)
+    with col5: st.markdown(f'<div class="card-metric"><div class="metric-value">{investigation}</div><div class="metric-label">Claims Under Investigation</div></div>', unsafe_allow_html=True)
+    with col6: st.markdown(f'<div class="card-metric"><div class="metric-value">{travel_mismatches}</div><div class="metric-label">Travel Mismatch Count</div></div>', unsafe_allow_html=True)
+    with col7: st.markdown(f'<div class="card-metric"><div class="metric-value">{duplicates}</div><div class="metric-label">Duplicate Claim Count</div></div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="section-header">Status Distribution</div>', unsafe_allow_html=True)
+    status_counts = df["status"].value_counts().reset_index()
+    fig = px.bar(status_counts, x="status", y="count", color="status", template="plotly_white")
+    st.plotly_chart(fig, use_container_width=True)
 
     # ── Filters ───────────────────────────────────────────────────────────────
     with st.expander("🔍 Filter Claims", expanded=False):
@@ -2654,13 +2710,15 @@ def render_sidebar() -> str:
 
         # Navigation
         pages = {
-            "Dashboard"                  : "dashboard",
-            "Claim Ingestion"            : "ingestion",
-            "Processing & Extraction"    : "processing",
-            "Validation"                 : "validation",
-            "AI Fraud Scoring"           : "fraud",
-            "Claim Report"               : "report",
-        }
+            "intake": "Claim Intake",
+            "processing": "Document Processing",
+            "travel": "Travel Validation",
+            "medical": "Medical Assessment",
+            "fraud": "Fraud Detection",
+            "decision": "Decision Engine",
+            "report": "Claim Report",
+            "dashboard": "Executive Dashboard"
+            }
 
         selected_label = st.radio(
             "Navigation",
@@ -2698,7 +2756,33 @@ def render_sidebar() -> str:
 
         return pages[selected_label]
 
+# --- PASTE THIS JUST BEFORE def main(): ---
+def page_intake():
+    st.markdown('<div class="page-hero"><h1>Claim Intake</h1><p>Register new claims here.</p></div>', unsafe_allow_html=True)
+    st.info("Intake form logic here.")
 
+def page_travel():
+    st.markdown('<div class="page-hero"><h1>Travel Validation</h1><p>Validate geographical policies.</p></div>', unsafe_allow_html=True)
+    st.info("Travel validation logic here.")
+
+def page_medical():
+    st.markdown('<div class="page-hero"><h1>Medical Assessment</h1><p>Assess clinical eligibility.</p></div>', unsafe_allow_html=True)
+    st.info("Medical logic here.")
+
+def page_fraud():
+    st.markdown('<div class="page-hero"><h1>Fraud Detection</h1><p>Analyze indicators.</p></div>', unsafe_allow_html=True)
+    st.info("Fraud engine logic here.")
+
+def page_decision():
+    st.markdown('<div class="page-hero"><h1>Decision Engine</h1><p>Final adjudication.</p></div>', unsafe_allow_html=True)
+    st.info("Decision engine logic here.")
+
+def page_report():
+    st.markdown('<div class="page-hero"><h1>Claim Report</h1><p>Summary of operations.</p></div>', unsafe_allow_html=True)
+    st.info("Reporting logic here.")
+# ──────────────────────────────────────────────────────────────────────────────
+# MAIN ENTRYPOINT
+# ──────────────────────────────────────────────────────────────────────────────
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN ENTRYPOINT
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2715,17 +2799,20 @@ def main() -> None:
     # Route to the selected page
     if active_page == "dashboard":
         page_dashboard(st.session_state["mock_claims_df"])
-    elif active_page == "ingestion":
-        page_ingestion()
+    elif active_page == "intake":
+        page_intake()
     elif active_page == "processing":
-        page_processing()
-    elif active_page == "validation":
-        page_validation()
+        page_processing()  # Keep your existing processing function here
+    elif active_page == "travel":
+        page_travel()
+    elif active_page == "medical":
+        page_medical()
     elif active_page == "fraud":
-        page_fraud_scoring()
+        page_fraud()
+    elif active_page == "decision":
+        page_decision()
     elif active_page == "report":
         page_report()
-
 
 if __name__ == "__main__":
     main()
